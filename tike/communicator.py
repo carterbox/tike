@@ -7,6 +7,7 @@ import logging
 import numpy as np
 from mpi4py import MPI
 import pickle
+import h5py
 
 __author__ = "Doga Gursoy, Daniel Ching"
 __copyright__ = "Copyright (c) 2018, UChicago Argonne, LLC."
@@ -127,3 +128,19 @@ class MPICommunicator(object):
             theta, v, h,
             detector_shape,
         )
+
+    def save_hdf5(self, filename, data, dataname='data'):
+        """Save data to hdf5."""
+        # Determine the full shape and location of the data
+        data = np.asarray(data)
+        num_views = self.comm.allgather(len(data))
+        view_start = np.sum(num_views[:self.rank], dtype=int)
+        combined_shape = (np.sum(num_views), *data[0].shape)
+        chunk = (view_start, view_start + len(data))
+        logger.info("\nThe combined shape is {}.\n"
+                    "This chunk is {}.".format(combined_shape, chunk))
+        # Compute data and write to file
+        with h5py.File(filename, 'w', driver='mpio', comm=self.comm) as file:
+            dataset = file.create_dataset(dataname, combined_shape,
+                                          dtype=data.dtype)
+            dataset[range(*chunk), ...] = data
