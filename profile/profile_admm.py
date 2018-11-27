@@ -22,6 +22,7 @@ os.environ["OMP_NUM_THREADS"] = "1"
 os.environ["OPENBLAS_NUM_THREADS"] = "1"
 import numpy as np
 import tike
+import h5py
 
 
 logging.basicConfig(level=logging.INFO)
@@ -55,18 +56,19 @@ def admm_profile_workload(
     """Run some admm work which may be profiled."""
     comm = tike.MPICommunicator()
     # Load data
-    data = None
-    if comm.rank == 0:
-        with open(data_file, 'rb') as file:
-            data = pickle.load(file)
-    data = comm.scatter(data)
+    with h5py.File(data_file, 'r', driver='mpio', comm=comm.comm) as f:
+        data = comm.load_hdf5_distributed(
+                f=f,
+                path='exchange/data'
+            )
     # Load acquisition parameters
-    (
-        obj, voxelsize,
-        probe, energy,
-        theta, v, h,
-        detector_shape,
-    ) = comm.load(params_file)
+    with h5py.File(params_file, 'r', driver='mpio', comm=comm.comm) as f:
+        (
+            obj, voxelsize,
+            probe, energy,
+            theta, v, h,
+            detector_shape,
+        ) = comm.get_acquisition(f=f)
     recon = np.zeros(obj.shape, dtype=np.complex64)
 
     if comm.rank == 0:

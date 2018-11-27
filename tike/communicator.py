@@ -91,37 +91,33 @@ class MPICommunicator(object):
     def allgather(self, arg, axis=0):
         return self.comm.allgather(arg)
 
-    def load(self, filename):
-        """Load all of the variables from a pickle."""
-        # Initally set all variables to None
-        (
-            obj, voxelsize,
-            probe, energy,
-            theta, v, h,
-            detector_shape,
-        ) = [None] * 8
-        # Load the data on one rank
-        if self.rank == 0:
-            with open(filename, 'rb') as file:
-                (
-                    obj, voxelsize,
-                    probe, energy,
-                    theta, v, h,
-                    detector_shape,
-                ) = pickle.load(file)
-        # Distribute the variables appropriately to each rank
-        (
-            voxelsize,
-            probe, energy,
-            theta,
-            detector_shape,
-        ) = self.broadcast(
-            voxelsize,
-            probe, energy,
-            theta,
-            detector_shape,
+    def get_acquisition(self, f):
+        """Get the acquisition parameters from a dxchange hdf5 file.
+
+        Parameters
+        ----------
+        f : hdf5 file context
+        comm : MPICommunicator
+
+        """
+        obj_path = 'measurement/sample/refractive_indices'
+        obj = self.load_hdf5_distributed(f=f, path=obj_path)
+        voxelsize = f[obj_path].attrs['voxelsize']
+        energy = f[obj_path].attrs['energy']
+        probe = f['measurement/instrument/probe/function'].value
+        theta = f['process/acquisition/image_theta'].value
+        v = self.load_hdf5_distributed(
+            f=f,
+            path='process/acquisition/sample_image_shift_v'
+            )
+        h = self.load_hdf5_distributed(
+            f=f,
+            path='process/acquisition/sample_image_shift_h'
+            )
+        detector_shape = (
+            f['measurement/instrument/detector/dimension_v'].value,
+            f['measurement/instrument/detector/dimension_h'].value,
         )
-        obj, v, h, = self.scatter(obj, v, h)
         return (
             obj, voxelsize,
             probe, energy,
@@ -129,18 +125,49 @@ class MPICommunicator(object):
             detector_shape,
         )
 
-    def save_hdf5(self, filename, data, dataname='data'):
-        """Save data to hdf5."""
+    def load_hdf5_distributed(self, f, path):
+        """Load data from an hdf5 file distributed along axis zero.
+
+        Parameters
+        ----------
+        f : hdf5 file context
+        path : string
+            The path to the data in the hdf file.
+
+        """
+        div_points = chunk_indices(f[path].shape[0], self.size)
+        return f[path][div_points[self.rank]:div_points[self.rank+1], ...]
+
+    def save_hdf5_distributed(self, f, path, data):
+        """Save data to an hdf5 file from data distributed along axis zero.
+
+        Parameters
+        ----------
+        f : hdf5 file context
+        path : string
+            The path to the data in the hdf file.
+        data : array-like
+
+        """
         # Determine the full shape and location of the data
         data = np.asarray(data)
-        num_views = self.comm.allgather(len(data))
-        view_start = np.sum(num_views[:self.rank], dtype=int)
-        combined_shape = (np.sum(num_views), *data[0].shape)
-        chunk = (view_start, view_start + len(data))
-        logger.info("\nThe combined shape is {}.\n"
-                    "This chunk is {}.".format(combined_shape, chunk))
+        chunk_sizes = self.comm.allgather(len(data))
+        lo = np.sum(chunk_sizes[:self.rank], dtype=int)
+        hi = lo + len(data)
+        combined_shape = (np.sum(chunk_sizes), *data[0].shape)
+        logger.info("\nThe combined shape is {}."
+                    "\nThis chunk range {}.".format(combined_shape, (lo, hi))
+                    )
         # Compute data and write to file
-        with h5py.File(filename, 'w', driver='mpio', comm=self.comm) as file:
-            dataset = file.create_dataset(dataname, combined_shape,
-                                          dtype=data.dtype)
-            dataset[range(*chunk), ...] = data
+        f.create_dataset(path, shape=combined_shape, dtype=data.dtype)
+        f[path][lo:hi, ...] = data
+
+
+def chunk_indices(Ntotal, Nsections):
+    """Return division indices from breaking Ntotal things into Nsections."""
+    Neach_section, extras = divmod(Ntotal, Nsections)
+    section_sizes = ([0]
+                     + extras * [Neach_section + 1]
+                     + (Nsections - extras) * [Neach_section])
+    div_points = np.cumsum(section_sizes)
+    return div_points
