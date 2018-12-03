@@ -146,8 +146,16 @@ def test_simulate(acqu_filename='./data/acquisition-params.hdf5',
 
 
 if __name__ == '__main__':
-    setUp()
+    comm = tike.MPICommunicator()
+    profile = True
+    if profile and comm.rank == 0:
+        setUp()
+        profiler = Profiler()
+        profiler.start()
     test_simulate()
+    if profile and comm.rank == 0:
+        profiler.stop()
+        print(profiler.output_text(unicode=True, color=False))
     # setUp(
     #         obj_file='../tests/data/nalm256.pickle.lzma',
     #         filename='./data/large-acquisition-params.pickle',
