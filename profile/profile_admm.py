@@ -16,13 +16,14 @@ import logging
 import os
 import pickle
 from pyinstrument import Profiler
+# These environmental variables must be set before numpy is imported anywhere.
 os.environ["MKL_NUM_THREADS"] = "1"
 os.environ["NUMEXPR_NUM_THREADS"] = "1"
 os.environ["OMP_NUM_THREADS"] = "1"
 os.environ["OPENBLAS_NUM_THREADS"] = "1"
-import numpy as np
-import tike
-import h5py
+import numpy as np  # noqa
+import tike  # noqa
+import h5py  # noqa
 
 
 logging.basicConfig(level=logging.INFO)
