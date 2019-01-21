@@ -83,12 +83,14 @@ class MPICommunicator(object):
         return np.concatenate(t_chunks, axis=0)  # Theta, V, H
 
     def gather(self, arg, root=0, axis=0):
+        """Gather arg to one node."""
         arg = self.comm.gather(arg, root=root)
         if self.rank == root:
             return np.concatenate(arg, axis=axis)
         return None
 
     def allgather(self, arg, axis=0):
+        """All nodes gather arg."""
         return self.comm.allgather(arg)
 
     def get_acquisition(self, f):
