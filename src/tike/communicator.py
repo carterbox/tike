@@ -3,16 +3,17 @@
 from __future__ import (absolute_import, division, print_function,
                         unicode_literals)
 
-import logging
-import numpy as np
-from mpi4py import MPI
-import pickle
-import h5py
-
 __author__ = "Doga Gursoy, Daniel Ching"
 __copyright__ = "Copyright (c) 2018, UChicago Argonne, LLC."
 __docformat__ = 'restructuredtext en'
 __all__ = ['MPICommunicator']
+
+import logging
+import pickle
+
+import h5py
+from mpi4py import MPI
+import numpy as np
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
