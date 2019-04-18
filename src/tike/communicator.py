@@ -11,7 +11,6 @@ __all__ = ['MPICommunicator']
 import logging
 import pickle
 
-import h5py
 from mpi4py import MPI
 import numpy as np
 
