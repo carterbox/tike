@@ -110,13 +110,9 @@ class MPICommunicator(object):
         probe = f['measurement/instrument/probe/function'].value
         theta = f['process/acquisition/image_theta'].value
         v = self.load_hdf5_distributed(
-            f=f,
-            path='process/acquisition/sample_image_shift_v'
-            )
+            f=f, path='process/acquisition/sample_image_shift_v')
         h = self.load_hdf5_distributed(
-            f=f,
-            path='process/acquisition/sample_image_shift_h'
-            )
+            f=f, path='process/acquisition/sample_image_shift_h')
         detector_shape = (
             f['measurement/instrument/detector/dimension_v'].value,
             f['measurement/instrument/detector/dimension_h'].value,
@@ -126,7 +122,7 @@ class MPICommunicator(object):
             probe, energy,
             theta, v, h,
             detector_shape,
-        )
+        )  # yapf: disable
 
     def load_hdf5_distributed(self, f, path):
         """Load data from an hdf5 file distributed along axis zero.
@@ -139,7 +135,7 @@ class MPICommunicator(object):
 
         """
         div_points = chunk_indices(f[path].shape[0], self.size)
-        return f[path][div_points[self.rank]:div_points[self.rank+1], ...]
+        return f[path][div_points[self.rank]:div_points[self.rank + 1], ...]
 
     def save_hdf5_distributed(self, f, path, data):
         """Save data to an hdf5 file from data distributed along axis zero.
@@ -159,8 +155,7 @@ class MPICommunicator(object):
         hi = lo + len(data)
         combined_shape = (np.sum(chunk_sizes), *data[0].shape)
         logger.info("\nThe combined shape is {}."
-                    "\nThis chunk range {}.".format(combined_shape, (lo, hi))
-                    )
+                    "\nThis chunk range {}.".format(combined_shape, (lo, hi)))
         # Compute data and write to file
         f.create_dataset(path, shape=combined_shape, dtype=data.dtype)
         f[path][lo:hi, ...] = data
@@ -169,8 +164,7 @@ class MPICommunicator(object):
 def chunk_indices(Ntotal, Nsections):
     """Return division indices from breaking Ntotal things into Nsections."""
     Neach_section, extras = divmod(Ntotal, Nsections)
-    section_sizes = ([0]
-                     + extras * [Neach_section + 1]
-                     + (Nsections - extras) * [Neach_section])
+    section_sizes = ([0] + extras * [Neach_section + 1] +
+                     (Nsections - extras) * [Neach_section])
     div_points = np.cumsum(section_sizes)
     return div_points
