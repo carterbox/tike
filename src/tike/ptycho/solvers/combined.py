@@ -2,7 +2,7 @@ import logging
 
 import numpy as np
 
-from tike.opt import conjugate_gradient, line_search, direction_dy
+from tike.opt import conjugate_gradient, line_search, direction_dy, update_single
 from ..position import update_positions_pd
 
 logger = logging.getLogger(__name__)
@@ -13,11 +13,12 @@ def combined(
     pool,
     data, probe, scan, psi,
     recover_psi=True, recover_probe=True, recover_positions=False,
-    cg_iter=4,
     num_iter=1,
     rtol=-1,
     psi_grad=None,
     psi_dir=None,
+    probe_grad=None,
+    probe_dir=None,
     **kwargs
 ):  # yapf: disable
     """Solve the ptychography problem using a combined approach.
@@ -45,14 +46,15 @@ def combined(
 
         if recover_probe:
             # TODO: add multi-GPU support
-            probe, cost = update_probe(
+            probe, cost, probe_grad, probe_dir = update_probe(
                 op,
                 pool,
                 pool.gather(data, axis=1),
                 psi[0],
                 pool.gather(scan, axis=1),
                 probe[0],
-                num_iter=cg_iter,
+                grad0=probe_grad,
+                dir0=probe_dir,
             )
             probe = pool.bcast(probe)
 
@@ -76,7 +78,7 @@ def combined(
     return {'psi': psi, 'probe': probe, 'cost': cost, 'scan': scan}
 
 
-def update_probe(op, pool, data, psi, scan, probe, num_iter=1):
+def update_probe(op, pool, data, psi, scan, probe, grad0=None, dir0=None):
     """Solve the probe recovery problem."""
 
     # TODO: Cache object patche between mode updates
@@ -93,29 +95,27 @@ def update_probe(op, pool, data, psi, scan, probe, num_iter=1):
                 keepdims=True,
             )
 
-        probe[..., m:m + 1, :, :], cost = conjugate_gradient(
-            op.xp,
+        grad1 = grad(probe[..., m:m + 1, :, :])
+        dir0 = direction_dy(op.xp, grad0, grad1, dir0)
+        grad0 = grad1
+
+        gamma, cost = line_search(
+            f=cost_function,
             x=probe[..., m:m + 1, :, :],
-            cost_function=cost_function,
-            grad=grad,
-            num_iter=num_iter,
+            d=dir0,
+            update_multi=update_single,
             step_length=4,
         )
 
-    logger.info('%10s cost is %+12.5e', 'probe', cost)
-    return probe, cost
+        probe[..., m:m + 1, :, :] = update_single(probe[..., m:m + 1, :, :],
+                                                  gamma, dir0)
+
+        logger.info('%10s cost is %+12.5e; step %.3e', 'probe', cost, gamma)
+
+    return probe, cost, grad0, dir0
 
 
-def update_object(
-    op,
-    pool,
-    data,
-    psi,
-    scan,
-    probe,
-    grad0=None,
-    dir0=None,
-):
+def update_object(op, pool, data, psi, scan, probe, grad0=None, dir0=None):
     """Solve the object recovery problem."""
 
     def cost_function_multi(psi, **kwargs):
@@ -160,5 +160,5 @@ def update_object(
 
     psi = update_multi(psi, gamma, dir_list)
 
-    logger.info('%10s cost is %+12.5e', 'object', cost)
+    logger.info('%10s cost is %+12.5e; step %.3e', 'object', cost, gamma)
     return psi, cost, grad0, dir1
