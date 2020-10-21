@@ -14,6 +14,8 @@ def combined(
     data, probe, scan, psi,
     recover_psi=True, recover_probe=True, recover_positions=False,
     cg_iter=4,
+    num_iter=1,
+    rtol=-1,
     **kwargs
 ):  # yapf: disable
     """Solve the ptychography problem using a combined approach.
@@ -25,41 +27,48 @@ def combined(
     pool : tike.pool.ThreadPoolExecutor
         An object which manages communications between GPUs.
     """
-    cost = np.inf
+    cost0 = np.inf
+    for i in range(num_iter):
+        if recover_psi:
+            psi, cost = update_object(
+                op,
+                pool,
+                data,
+                psi,
+                scan,
+                probe,
+                num_iter=cg_iter,
+            )
 
-    if recover_psi:
-        psi, cost = update_object(
-            op,
-            pool,
-            data,
-            psi,
-            scan,
-            probe,
-            num_iter=cg_iter,
-        )
+        if recover_probe:
+            # TODO: add multi-GPU support
+            probe, cost = update_probe(
+                op,
+                pool,
+                pool.gather(data, axis=1),
+                psi[0],
+                pool.gather(scan, axis=1),
+                probe[0],
+                num_iter=cg_iter,
+            )
+            probe = pool.bcast(probe)
 
-    if recover_probe:
-        # TODO: add multi-GPU support
-        probe, cost = update_probe(
-            op,
-            pool,
-            pool.gather(data, axis=1),
-            psi[0],
-            pool.gather(scan, axis=1),
-            probe[0],
-            num_iter=cg_iter,
-        )
-        probe = pool.bcast(probe)
+        if recover_positions and pool.num_workers == 1:
+            scan, cost = update_positions_pd(
+                op,
+                pool.gather(data, axis=1),
+                psi[0],
+                probe[0],
+                pool.gather(scan, axis=1),
+            )
+            scan = pool.bcast(scan)
 
-    if recover_positions and pool.num_workers == 1:
-        scan, cost = update_positions_pd(
-            op,
-            pool.gather(data, axis=1),
-            psi[0],
-            probe[0],
-            pool.gather(scan, axis=1),
-        )
-        scan = pool.bcast(scan)
+        # Check for early termination
+        if i > 0 and abs((cost - cost0) / cost0) < rtol:
+            logger.info("Cost function rtol < %g reached at %d "
+                        "iterations.", rtol, i)
+            break
+        cost0 = cost
 
     return {'psi': psi, 'probe': probe, 'cost': cost, 'scan': scan}
 

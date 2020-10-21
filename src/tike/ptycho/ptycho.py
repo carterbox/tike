@@ -139,7 +139,7 @@ def reconstruct(
         data,
         probe, scan,
         algorithm,
-        psi=None, num_gpu=1, num_iter=1, rtol=-1, split=None, **kwargs
+        psi=None, num_gpu=1, num_iter=1, split=None, **kwargs
 ):  # yapf: disable
     """Solve the ptychography problem using the given `algorithm`.
 
@@ -191,22 +191,14 @@ def reconstruct(
                                                  result['psi'], result['scan'],
                                                  result['probe'])
 
-            cost = 0
-            for i in range(num_iter):
-                kwargs.update(result)
-                result = getattr(solvers, algorithm)(
-                    operator,
-                    pool,
-                    data=data,
-                    **kwargs,
-                )
-                # Check for early termination
-                if i > 0 and abs((result['cost'] - cost) / cost) < rtol:
-                    logger.info(
-                        "Cost function rtol < %g reached at %d "
-                        "iterations.", rtol, i)
-                    break
-                cost = result['cost']
+            kwargs.update(result)
+            result = getattr(solvers, algorithm)(
+                operator,
+                pool,
+                data=data,
+                num_iter=num_iter,
+                **kwargs,
+            )
 
             result['scan'] = pool.gather(result['scan'], axis=1)
             for k, v in result.items():
