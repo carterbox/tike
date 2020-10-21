@@ -95,6 +95,7 @@ def update_probe(op, pool, data, psi, scan, probe, grad0=None, dir0=None):
                 keepdims=True,
             )
 
+        # TODO: Keep a unique gradient and search direction for each mode
         grad1 = grad(probe[..., m:m + 1, :, :])
         dir0 = direction_dy(op.xp, grad0, grad1, dir0)
         grad0 = grad1
