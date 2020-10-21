@@ -76,6 +76,8 @@ def direction_dy(xp, grad0, grad1, dir_):
         The previous search direction.
 
     """
+    if grad0 is None or dir_ is None:
+        return -grad1
     return (
         - grad1
         + dir_ * xp.linalg.norm(grad1.ravel())**2

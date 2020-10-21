@@ -2,7 +2,7 @@ import logging
 
 import numpy as np
 
-from tike.opt import conjugate_gradient, line_search
+from tike.opt import conjugate_gradient, line_search, direction_dy
 from ..position import update_positions_pd
 
 logger = logging.getLogger(__name__)
@@ -16,6 +16,8 @@ def combined(
     cg_iter=4,
     num_iter=1,
     rtol=-1,
+    psi_grad=None,
+    psi_dir=None,
     **kwargs
 ):  # yapf: disable
     """Solve the ptychography problem using a combined approach.
@@ -30,14 +32,15 @@ def combined(
     cost0 = np.inf
     for i in range(num_iter):
         if recover_psi:
-            psi, cost = update_object(
+            psi, cost, psi_grad, psi_dir = update_object(
                 op,
                 pool,
                 data,
                 psi,
                 scan,
                 probe,
-                num_iter=cg_iter,
+                grad0=psi_grad,
+                dir0=psi_dir,
             )
 
         if recover_probe:
@@ -103,7 +106,16 @@ def update_probe(op, pool, data, psi, scan, probe, num_iter=1):
     return probe, cost
 
 
-def update_object(op, pool, data, psi, scan, probe, num_iter=1):
+def update_object(
+    op,
+    pool,
+    data,
+    psi,
+    scan,
+    probe,
+    grad0=None,
+    dir0=None,
+):
     """Solve the object recovery problem."""
 
     def cost_function_multi(psi, **kwargs):
@@ -125,10 +137,6 @@ def update_object(op, pool, data, psi, scan, probe, num_iter=1):
 
         return grad_list[0]
 
-    def dir_multi(dir):
-        """Scatter dir to all GPUs"""
-        return pool.bcast(dir)
-
     def update_multi(psi, gamma, dir):
 
         def f(psi, dir):
@@ -136,16 +144,21 @@ def update_object(op, pool, data, psi, scan, probe, num_iter=1):
 
         return list(pool.map(f, psi, dir))
 
-    psi, cost = conjugate_gradient(
-        op.xp,
+    grad1 = grad_multi(psi)
+    dir1 = direction_dy(op.xp, grad0, grad1, dir0)
+    grad0 = grad1
+
+    dir_list = pool.bcast(dir1)
+
+    gamma, cost = line_search(
+        f=cost_function_multi,
         x=psi,
-        cost_function=cost_function_multi,
-        grad=grad_multi,
-        dir_multi=dir_multi,
+        d=dir_list,
         update_multi=update_multi,
-        num_iter=num_iter,
         step_length=8e-5,
     )
 
+    psi = update_multi(psi, gamma, dir_list)
+
     logger.info('%10s cost is %+12.5e', 'object', cost)
-    return psi, cost
+    return psi, cost, grad0, dir1
