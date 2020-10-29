@@ -34,53 +34,39 @@ _1d_to_nd(int d, int s, int* nd, int ndim, int diameter, int radius) {
 typedef void
 scatterOrGather(float2*, int, const float2*, int, float);
 
-// grid shape (-(-kernel_size // max_threads), 0, nf)
-// block shape (min(kernel_size, max_threads), 0, 0)
+// grid shape (nf, kernel_size2, 0)
+// block shape (kernel_size0, kernel_size1, 0)
 __device__ void
 _loop_over_kernels(scatterOrGather operation, float2* gathered,
                    const float2* scattered, int nf, const float* x, int n,
                    int radius, const float* cons, int ndim) {
-  const int diameter = 2 * radius;  // kernel width
-  const int nk = pow(diameter, ndim);
   const int gw = 2 * n;  // width of G along each dimension
   const int max_dim = 3;
   assert(0 < ndim && ndim <= max_dim);
 
+  // intra-kernel coordinates (k)
+  int k[max_dim] = {threadIdx.x, threadIdx.y, blockIdx.y};
+
   // non-uniform frequency index (fi)
-  for (int fi = blockIdx.z; fi < nf; fi += gridDim.z) {
-    int center[max_dim];  // closest ND coord to kernel center
-    for (int dim = 0; dim < ndim; dim++) {
-      center[dim] = int(floor(2 * n * x[ndim * fi + dim]));
+  for (int fi = blockIdx.x; fi < nf; fi += gridDim.x) {
+    // Compute sum square value for kernel and equally-spaced grid index (gi)
+    float ssdelta = 0;
+    int gi = 0;
+    int stride = 1;
+    for (int dim = ndim - 1; dim >= 0; dim--) {
+      // closest ND coord to kernel center
+      int center = floor(2 * n * x[ndim * fi + dim]);
+      // shift intra-kernel coordinates to zero-center
+      k[dim] -= radius;
+
+      float delta = (float)(center + k[dim]) / (2 * n) - x[ndim * fi + dim];
+      ssdelta += delta * delta;
+      gi += mod((n + center + k[dim]), gw) * stride;
+      stride *= gw;
     }
+    const float kernel = cons[0] * exp(cons[1] * ssdelta);
 
-    // intra-kernel index (ki)
-    // clang-format off
-    for (
-      int ki = threadIdx.x + blockDim.x * blockIdx.x;
-      ki < nk;
-      ki += blockDim.x * gridDim.x
-    ) {
-      // clang-format on
-
-      // Convert linear index to 3D intra-kernel index
-      int k[max_dim];  // ND kernel coord
-      _1d_to_nd(ki, nk, k, ndim, diameter, radius);
-
-      // Compute sum square value for kernel and equally-spaced grid index (gi)
-      float ssdelta = 0;
-      float delta;
-      int gi = 0;
-      int stride = 1;
-      for (int dim = ndim - 1; dim >= 0; dim--) {
-        delta = (float)(center[dim] + k[dim]) / (2 * n) - x[ndim * fi + dim];
-        ssdelta += delta * delta;
-        gi += mod((n + center[dim] + k[dim]), gw) * stride;
-        stride *= gw;
-      }
-      const float kernel = cons[0] * exp(cons[1] * ssdelta);
-
-      operation(gathered, fi, scattered, gi, kernel);
-    }
+    operation(gathered, fi, scattered, gi, kernel);
   }
 }
 

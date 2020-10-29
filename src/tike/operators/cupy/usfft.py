@@ -17,12 +17,15 @@ _gather_kernel = cp.RawKernel(_cu_source, "gather")
 def _scatter(f, x, n, m, mu):
     G = cp.zeros([2 * n] * 3, dtype="complex64")
     const = cp.array([cp.sqrt(cp.pi / mu)**3, -cp.pi**2 / mu], dtype='float32')
-    block = (min(_scatter_kernel.max_threads_per_block, (2 * m)**3),)
-    grid = (1, 0, min(f.shape[0], 65535))
+
+    kernel_size = _next_power_two(2 * m)
+    block = (kernel_size, kernel_size)
+    grid = (x.shape[0], 2 * m)
+
     _scatter_kernel(grid, block, (
         G,
         f.astype('complex64'),
-        f.shape[0],
+        x.shape[0],
         x.astype('float32'),
         n,
         m,
@@ -34,8 +37,11 @@ def _scatter(f, x, n, m, mu):
 def _gather(Fe, x, n, m, mu):
     F = cp.zeros(x.shape[0], dtype="complex64")
     const = cp.array([cp.sqrt(cp.pi / mu)**3, -cp.pi**2 / mu], dtype='float32')
-    block = (min(_gather_kernel.max_threads_per_block, (2 * m)**3),)
-    grid = (1, 0, min(x.shape[0], 65535))
+
+    kernel_size = _next_power_two(2 * m)
+    block = (kernel_size, kernel_size)
+    grid = (x.shape[0], 2 * m)
+
     _gather_kernel(grid, block, (
         F,
         Fe.astype('complex64'),
@@ -178,3 +184,16 @@ def checkerboard(xp, array, axes=None, inverse=False):
             array *= _g(array.shape[-1] // 2)
         array = xp.moveaxis(array, -1, i)
     return array
+
+
+def _next_power_two(v):
+    """Return the next highest power of 2 of 32-bit v.
+    https://graphics.stanford.edu/~seander/bithacks.html#RoundUpPowerOf2
+    """
+    v -= 1
+    v |= v >> 1
+    v |= v >> 2
+    v |= v >> 4
+    v |= v >> 8
+    v |= v >> 16
+    return v + 1
