@@ -15,14 +15,17 @@ _gather_kernel = cp.RawKernel(_cu_source, "gather")
 
 
 def _scatter(f, x, n, m, mu):
-    G = cp.zeros([2 * n] * 3, dtype="complex64")
-    const = cp.array([cp.sqrt(cp.pi / mu)**3, -cp.pi**2 / mu], dtype='float32')
+    ndim = x.shape[1]
+    const = cp.array([cp.sqrt(cp.pi / mu)**ndim, -cp.pi**2 / mu],
+                     dtype='float32')
 
     kernel_size = _next_power_two(2 * m)
     block = (kernel_size, kernel_size)
     grid = (x.shape[0], 2 * m)
 
+    G = cp.zeros([2 * n] * ndim, dtype="complex64")
     _scatter_kernel(grid, block, (
+        ndim,
         G,
         f.astype('complex64'),
         x.shape[0],
@@ -35,14 +38,17 @@ def _scatter(f, x, n, m, mu):
 
 
 def _gather(Fe, x, n, m, mu):
-    F = cp.zeros(x.shape[0], dtype="complex64")
-    const = cp.array([cp.sqrt(cp.pi / mu)**3, -cp.pi**2 / mu], dtype='float32')
+    ndim = x.shape[1]
+    const = cp.array([cp.sqrt(cp.pi / mu)**ndim, -cp.pi**2 / mu],
+                     dtype='float32')
 
     kernel_size = _next_power_two(2 * m)
     block = (kernel_size, kernel_size)
     grid = (x.shape[0], 2 * m)
 
+    F = cp.zeros(x.shape[0], dtype="complex64")
     _gather_kernel(grid, block, (
+        ndim,
         F,
         Fe.astype('complex64'),
         x.shape[0],
@@ -54,13 +60,19 @@ def _gather(Fe, x, n, m, mu):
     return F
 
 
-def _get_kernel(xp, pad, mu):
+def _get_kernel(pad, mu, ndim=3):
     """Return the interpolation kernel for the USFFT."""
-    xeq = xp.mgrid[-pad:pad, -pad:pad, -pad:pad]
-    return xp.exp(-mu * xp.sum(xeq**2, axis=0)).astype('float32')
+    xeq = cp.array(
+        cp.meshgrid(
+            *[cp.arange(-pad, pad)] * ndim,
+            indexing='ij',
+        ),
+        dtype='float32',
+    )
+    return cp.exp(-mu * cp.sum(xeq**2, axis=0))
 
 
-def eq2us(f, x, n, eps, xp, gather=_gather, fftn=None):
+def eq2us(f, x, n, eps, xp, gather=None, fftn=None):
     """USFFT from equally-spaced grid to unequally-spaced grid.
 
     Parameters
@@ -73,7 +85,7 @@ def eq2us(f, x, n, eps, xp, gather=_gather, fftn=None):
         The desired relative accuracy of the USFFT.
     """
     fftn = xp.fft.fftn if fftn is None else fftn
-    ndim = f.ndim
+    ndim = x.shape[1]
     pad = n // 2  # where zero-padding stops
     end = pad + n  # where f stops
 
@@ -83,7 +95,7 @@ def eq2us(f, x, n, eps, xp, gather=_gather, fftn=None):
     m = xp.int(xp.ceil(2 * n * Te))
 
     # smearing kernel (kernel)
-    kernel = _get_kernel(xp, pad, mu)
+    kernel = _get_kernel(pad, mu, ndim=ndim)
 
     # FFT and compesantion for smearing
     fe = xp.zeros([2 * n] * ndim, dtype="complex64")
@@ -94,23 +106,22 @@ def eq2us(f, x, n, eps, xp, gather=_gather, fftn=None):
     return F
 
 
-def us2eq(f, x, n, eps, xp, scatter=_scatter, fftn=None):
+def us2eq(f, x, n, eps, xp, scatter=None, fftn=None):
     """USFFT from unequally-spaced grid to equally-spaced grid.
 
     Parameters
     ----------
-    f : (n**3) complex64
+    f : (N) complex64
         Values of unequally-spaced function on the grid x
-    x : (n**3) float
+    x : (N, 3) float
         The frequencies on the unequally-spaced grid
     n : int
         The size of the equall spaced grid.
     eps : float
         The accuracy of computing USFFT
-    scatter : function
-        The scatter function to use.
     """
     fftn = xp.fft.fftn if fftn is None else fftn
+    ndim = x.shape[1]
     pad = n // 2  # where zero-padding stops
     end = pad + n  # where f stops
 
@@ -120,13 +131,13 @@ def us2eq(f, x, n, eps, xp, scatter=_scatter, fftn=None):
     m = xp.int(xp.ceil(2 * n * Te))
 
     # smearing kernel (ker)
-    kernel = _get_kernel(xp, pad, mu)
+    kernel = _get_kernel(pad, mu, ndim=ndim)
 
     G = _scatter(f, x, n, m, mu)
 
     # FFT and compesantion for smearing
     F = checkerboard(xp, fftn(checkerboard(xp, G)), inverse=True)
-    F = F[pad:end, pad:end, pad:end] / ((2 * n)**3 * kernel)
+    F = F[pad:end, pad:end, pad:end] / ((2 * n)**ndim * kernel)
 
     return F
 

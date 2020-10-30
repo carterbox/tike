@@ -34,7 +34,7 @@ _1d_to_nd(int d, int s, int* nd, int ndim, int diameter, int radius) {
 typedef void
 scatterOrGather(float2*, int, const float2*, int, float);
 
-// grid shape (nf, kernel_size2, 0)
+// grid shape (nf, kernel_size2, num_strides)
 // block shape (kernel_size0, kernel_size1, 0)
 __device__ void
 _loop_over_kernels(scatterOrGather operation, float2* gathered,
@@ -79,9 +79,9 @@ _gather(float2* gather, int gi, const float2* scatter, int si, float kernel) {
 }
 
 extern "C" __global__ void
-gather(float2* F, const float2* Fe, int nf, const float* x, int n, int radius,
-       const float* cons) {
-  _loop_over_kernels(_gather, F, Fe, nf, x, n, radius, cons, 3);
+gather(int ndim, float2* F, const float2* Fe, int nf, const float* x, int n,
+       int radius, const float* cons) {
+  _loop_over_kernels(_gather, F, Fe, nf, x, n, radius, cons, ndim);
 }
 
 __device__ void
@@ -91,7 +91,7 @@ _scatter(float2* gather, int si, const float2* scatter, int gi, float kernel) {
 }
 
 extern "C" __global__ void
-scatter(float2* G, const float2* f, int nf, const float* x, int n, int radius,
-        const float* cons) {
-  _loop_over_kernels(_scatter, G, f, nf, x, n, radius, cons, 3);
+scatter(int ndim, float2* G, const float2* f, int nf, const float* x, int n,
+        int radius, const float* cons) {
+  _loop_over_kernels(_scatter, G, f, nf, x, n, radius, cons, ndim);
 }
