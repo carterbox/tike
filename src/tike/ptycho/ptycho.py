@@ -174,6 +174,8 @@ def reconstruct(
             logger.info("{} for {:,d} - {:,d} by {:,d} frames for {:,d} "
                         "iterations.".format(algorithm, *data.shape[1:],
                                              num_iter))
+            #TODO: Better integrate batch division with GPU division for better
+            #data locality and less awkward batch iteration
             if split == 'grid':
                 scan, data = split_by_scan_grid(
                     operator,
@@ -186,15 +188,18 @@ def reconstruct(
                                                    operator.fly)
             result = {
                 'psi': pool.bcast(psi.astype('complex64')),
-                'probe': pool.bcast(probe.astype('complex64')),
             }
+
+            probe = pool.bcast(probe.astype('complex64'))
+
+
             for key, value in kwargs.items():
                 if np.ndim(value) > 0:
                     kwargs[key] = pool.bcast(value)
 
-            result['probe'] = _rescale_obj_probe(operator, pool, data,
-                                                 result['psi'], scan,
-                                                 result['probe'])
+            probe = _rescale_obj_probe(operator, pool, data, result['psi'],
+                                       scan, probe)
+
 
             batches = batch_indicies(data[0].shape[1], batch_size,
                                      subset_is_random)
@@ -205,12 +210,17 @@ def reconstruct(
                 for batch in batches:
                     kwargs.update(result)
                     kwargs['scan'] = [s[:, batch] for s in scan]
+                    kwargs['probe'] = [p[:, batch] for p in probe]
+
                     result = getattr(solvers, algorithm)(
                         operator,
                         pool,
                         data=[d[:, batch] for d in data],
                         **kwargs,
                     )
+                    for p, b in zip(probe, result['probe']):
+                        p[:, batch] = b
+
                 costs.append(result['cost'])
                 times.append(time.perf_counter() - start)
                 start = time.perf_counter()
@@ -222,6 +232,7 @@ def reconstruct(
                         "iterations.", rtol, i)
                     break
 
+            result['probe'] = pool.gather(probe, axis=1)
             result['scan'] = pool.gather(scan, axis=1)
             result['cost'] = operator.asarray(costs)
             result['times'] = operator.asarray(times)
@@ -248,7 +259,8 @@ def _rescale_obj_probe(operator, pool, data, psi, scan, probe):
         min(64, data.shape[1]),
         replace=False,
     )
-    intensity = operator._compute_intensity(data[:, s], psi, scan[:, s], probe)
+    intensity = operator._compute_intensity(data[:, s], psi, scan[:, s],
+                                            probe[:, s])
 
     rescale = (np.linalg.norm(np.ravel(np.sqrt(data[:, s]))) /
                np.linalg.norm(np.ravel(np.sqrt(intensity))))

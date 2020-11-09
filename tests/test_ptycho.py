@@ -206,6 +206,7 @@ class TestPtychoRecon(unittest.TestCase):
             params={
                 'subset_is_random': True,
                 'batch_size': int(self.data.shape[1] * 0.6),
+                'coherent_modes': 1,
             },
         )
 

@@ -3,7 +3,7 @@ import logging
 import cupy as cp
 
 from ..position import update_positions_pd
-from ..probe import orthogonalize_eig
+from ..probe import orthogonalize_eig, opr
 
 logger = logging.getLogger(__name__)
 
@@ -14,6 +14,7 @@ def lstsq_grad(
     recover_psi=True, recover_probe=False, recover_positions=False,
     cg_iter=4,
     cost=None,
+    coherent_modes=0,
 ):  # yapf: disable
     """Solve the ptychography problem using Odstrcil et al's approach.
 
@@ -26,6 +27,9 @@ def lstsq_grad(
         A ptychography operator.
     pool : tike.pool.ThreadPoolExecutor
         An object which manages communications between GPUs.
+    coherent_modes : int
+        If the number of coherent probe modes is greater than 0, then the probe
+        is allowed to vary slightly with scan position.
 
     References
     ----------
@@ -151,11 +155,15 @@ def lstsq_grad(
 
             norm_psi = cp.sum(psi_intensity, axis=(1, 2)) + 1e-6
 
-            dir_probe = cp.sum(
-                grad_probe,
-                axis=(1, 2),
-                keepdims=True,
-            ) / norm_psi
+            if coherent_modes:
+                # probe allowed to vary with scan position
+                dir_probe = grad_probe
+            else:
+                dir_probe = cp.sum(
+                    grad_probe,
+                    axis=(1, 2),
+                    keepdims=True,
+                ) / norm_psi
 
             dPO = patches.copy()
             dPO[..., pad:end, pad:end] *= dir_probe
@@ -193,6 +201,10 @@ def lstsq_grad(
             weighted_step = cp.sum(step * psi_intensity, axis=(1, 2))
 
             probe_ += dir_probe * weighted_step / norm_psi
+
+            if coherent_modes:
+                probe_ = opr(probe_, coherent_modes)
+
             d += step * dPO
 
         if __debug__:
