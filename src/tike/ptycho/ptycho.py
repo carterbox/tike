@@ -245,6 +245,40 @@ def reconstruct(
             "The '{}' algorithm is not an available.".format(algorithm))
 
 
+import cupy as cp
+
+
+def _make_batches(data, scan, probe, batch_size=None, subset_is_random=None):
+    """Divide ptycho-inputs into mini-batches along position dimension.
+
+    Parameters
+    ----------
+    data : (M, N, ...)
+    scan : (M, N, 2)
+    probe : (M, N, ...), (M, 1, ...)
+
+    Returns
+    -------
+    batches : list-of-tuple
+        Each element of this list is a tuple containing a mini-batch of the
+        ptycho-inputs.
+
+    """
+    indicies = batch_indicies(data.shape[1], batch_size, subset_is_random)
+    if probe.shape[1] > 1:
+        # probe varies with scan position.
+        probes = [cp.ascontiguousarray(probe[:, i]) for i in indicies]
+    else:
+        # shared probe amongst scan positions.
+        probes = cp.ascontiguousarray(probe)
+        probes = [probes for i in indicies]
+    return zip(
+        [cp.ascontiguousarray(data[:, i]) for i in indicies],
+        [cp.ascontiguousarray(scan[:, i]) for i in indicies],
+        probes,
+    )
+
+
 def _rescale_obj_probe(operator, pool, data, psi, scan, probe):
     """Keep the object amplitude around 1 by scaling probe by a constant."""
     # TODO: add multi-GPU support
