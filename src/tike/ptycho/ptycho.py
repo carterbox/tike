@@ -192,7 +192,6 @@ def reconstruct(
 
             probe = pool.bcast(probe.astype('complex64'))
 
-
             for key, value in kwargs.items():
                 if np.ndim(value) > 0:
                     kwargs[key] = pool.bcast(value)
@@ -200,13 +199,15 @@ def reconstruct(
             probe = _rescale_obj_probe(operator, pool, data, result['psi'],
                                        scan, probe)
 
-
             batches = batch_indicies(data[0].shape[1], batch_size,
                                      subset_is_random)
             costs = []
             times = []
             start = time.perf_counter()
             for i in range(num_iter):
+                logger.info(f"{algorithm} epoch {i:,d}")
+                result['psi_step'] = None
+                result['probe_step'] = None
                 for batch in batches:
                     kwargs.update(result)
                     kwargs['scan'] = [s[:, batch] for s in scan]
@@ -220,8 +221,8 @@ def reconstruct(
                     )
                     for p, b in zip(probe, result['probe']):
                         p[:, batch] = b
-
-                costs.append(result['cost'])
+                    if result['cost'] is not None:
+                        costs.append(result['cost'])
                 times.append(time.perf_counter() - start)
                 start = time.perf_counter()
 
