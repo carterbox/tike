@@ -4,6 +4,7 @@ import numpy as np
 
 from tike.opt import conjugate_gradient
 from ..position import update_positions_pd
+from ..probe import opr
 
 logger = logging.getLogger(__name__)
 
@@ -16,6 +17,7 @@ def cgrad(
     psi_step=None,
     probe_step=None,
     cost=None,
+    coherent_modes=0,
 ):  # yapf: disable
     """Solve the ptychography problem using conjugate gradient.
 
@@ -49,6 +51,7 @@ def cgrad(
             probe[0],
             num_iter=cg_iter,
             step_length=probe_step,
+            coherent_modes=coherent_modes,
         )
         probe = pool.bcast(probe)
 
@@ -93,6 +96,7 @@ def _update_probe(
     probe,
     num_iter=1,
     step_length=None,
+    coherent_modes=0,
 ):
     """Solve the probe recovery problem."""
 
@@ -111,21 +115,25 @@ def _update_probe(
 
         def grad(mode):
             intensity[m], farplane = _compute_intensity(op, psi, scan, mode)
-            # Use the average gradient for all probe positions
-            return op.xp.mean(
-                op.adj_probe(
-                    farplane=op.propagation.grad(
-                        data,
-                        farplane,
-                        op.xp.sum(intensity, axis=0),
-                    ),
-                    psi=psi,
-                    scan=scan,
-                    overwrite=True,
+            grads = op.adj_probe(
+                farplane=op.propagation.grad(
+                    data,
+                    farplane,
+                    op.xp.sum(intensity, axis=0),
                 ),
-                axis=(1, 2),
-                keepdims=True,
+                psi=psi,
+                scan=scan,
+                overwrite=True,
             )
+            if coherent_modes:
+                return grads
+            else:
+                # Use the average gradient for all probe positions
+                return op.xp.mean(
+                    grads,
+                    axis=(1, 2),
+                    keepdims=True,
+                )
 
         probe[..., m:m + 1, :, :], costm, step_length = conjugate_gradient(
             op.xp,
@@ -138,6 +146,9 @@ def _update_probe(
         )
         if costm is not None:
             cost = costm
+
+    if coherent_modes:
+        probe = opr(probe, coherent_modes)
 
     if cost is not None:
         logger.info('%10s cost is %+12.5e, step length is %+12.5e', 'probe',
