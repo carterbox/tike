@@ -163,6 +163,7 @@ def reconstruct(
     """
     (psi, scan) = get_padded_object(scan, probe) if psi is None else (psi, scan)
     check_allowed_positions(scan, psi, probe)
+    coherent_modes = probe.shape[1] > 1
     if algorithm in dir(solvers):
         # Initialize an operator.
         with Ptycho(
@@ -183,16 +184,18 @@ def reconstruct(
                     1,
                     int(data.shape[1] / batch_size / pool.num_workers),
                 )
-            data, scan = split_by_scan_grid(
+            data, scan, probe = split_by_scan_grid(
                 data,
                 scan,
+                probe,
                 (2 if pool.num_workers > 1 else 1, (pool.num_workers + 1) // 2),
                 operator.fly,
             )
-            data, scan = zip(*pool.map(
+            data, scan, probe = zip(*pool.map(
                 _make_mini_batches,
                 data,
                 scan,
+                probe,
                 num_batch=num_batch,
                 subset_is_random=subset_is_random,
             ))
@@ -201,20 +204,18 @@ def reconstruct(
                 'psi': pool.bcast(psi.astype('complex64')),
             }
 
-            probe = pool.bcast(probe.astype('complex64'))
-
             for key, value in kwargs.items():
                 if np.ndim(value) > 0:
                     kwargs[key] = pool.bcast(value)
 
-            result['probe'] = pool.bcast(
-                _rescale_obj_probe(
-                    operator,
-                    pool,
-                    data[0][0],
-                    result['psi'][0],
-                    scan[0][0],
-                    probe[0],
+            probe = list(
+                pool.map(
+                    _rescale_obj_probe,
+                    data,
+                    result['psi'],
+                    scan,
+                    probe,
+                    operator=operator,
                 ))
 
             costs = []
@@ -227,6 +228,9 @@ def reconstruct(
                 for b in range(num_batch):
                     kwargs.update(result)
                     kwargs['scan'] = [s[b] for s in scan]
+                    kwargs['probe'] = [
+                        p[b if coherent_modes else 0] for p in probe
+                    ]
                     result = getattr(solvers, algorithm)(
                         operator,
                         pool,
@@ -237,7 +241,8 @@ def reconstruct(
                         costs.append(result['cost'])
                     for g in range(pool.num_workers):
                         scan[g][b] = result['scan'][g]
-                    probe = result['probe']
+                        probe[g][b if coherent_modes else 0] = result['probe'][
+                            g]
 
                 times.append(time.perf_counter() - start)
                 start = time.perf_counter()
@@ -265,7 +270,14 @@ def reconstruct(
             "The '{}' algorithm is not an available.".format(algorithm))
 
 
-def _make_mini_batches(data, scan, num_batch, subset_is_random=True):
+def _make_mini_batches(
+    data,
+    scan,
+    probe,
+    num_batch,
+    subset_is_random=True,
+    coherent_modes=False,
+):
     """Divide ptycho-inputs into mini-batches along position dimension.
 
     Parameters
@@ -285,28 +297,35 @@ def _make_mini_batches(data, scan, num_batch, subset_is_random=True):
     else:
         indices = np.arange(data.shape[1])
     indices = np.array_split(indices, num_batch)
+    if coherent_modes:
+        probe = [cp.asarray(probe[:, i], dtype='complex64') for i in indices]
+    else:
+        probe = [cp.asarray(probe, dtype='complex64')]
     return (
         [cp.asarray(data[:, i], dtype='float32') for i in indices],
         [cp.asarray(scan[:, i], dtype='float32') for i in indices],
+        probe,
     )
 
 
-def _rescale_obj_probe(operator, pool, data, psi, scan, probe):
+def _rescale_obj_probe(data, psi, scan, probe, operator, b=0):
     """Keep the object amplitude around 1 by scaling probe by a constant."""
 
-    intensity = operator._compute_intensity(data, psi, scan, probe)
+    intensity = operator._compute_intensity(data[b], psi, scan[b], probe[b])
 
-    rescale = (np.linalg.norm(np.ravel(np.sqrt(data))) /
+    rescale = (np.linalg.norm(np.ravel(np.sqrt(data[b]))) /
                np.linalg.norm(np.ravel(np.sqrt(intensity))))
 
     logger.info("object and probe rescaled by %f", rescale)
 
-    probe *= rescale
+    # Rescale all batches by one batch, b.
+    for b in range(len(probe)):
+        probe[b] *= rescale
 
     return probe
 
 
-def split_by_scan_grid(data, scan, shape, fly=1):
+def split_by_scan_grid(data, scan, probe, shape, fly=1, coherent_modes=False):
     """ split the field of view into a 2D grid.
 
     Mask divide the data into a 2D grid of spatially contiguous regions.
@@ -334,7 +353,11 @@ def split_by_scan_grid(data, scan, shape, fly=1):
     mask = [np.logical_and(*pair) for pair in product(vstripes, hstripes)]
     data = [data[:, m] for m in mask]
     scan = [scan[:, m] for m in mask]
-    return data, scan
+    if coherent_modes:
+        probe = [probe[:, m] for m in mask]
+    else:
+        probe = [probe]
+    return data, scan, probe
 
 
 def split_by_scan_stripes(scan, n, fly=1, axis=0):
