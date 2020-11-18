@@ -44,6 +44,11 @@ def lstsq_grad(
     scan_ = scan[0]
     psi = psi[0]
 
+    if ((coherent_modes and probe.shape[1] == 1)
+            or (not coherent_modes and not probe.shape[1] == 1)):
+        raise ValueError(
+            "Coherent modes require a unique probe for every position!")
+
     # Compute the diffraction patterns for all of the probe modes at once.
     # We need access to all of the modes of a position to solve the phase
     # problem. The Ptycho operator doesn't do this natively, so it's messy.
