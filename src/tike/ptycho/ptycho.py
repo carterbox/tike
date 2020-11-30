@@ -225,7 +225,8 @@ def reconstruct(
             for i in range(num_iter):
 
                 logger.info(f"{algorithm} epoch {i:,d}")
-
+                result['psi_step'] = None
+                result['probe_step'] = None
                 for b in range(num_batch):
                     kwargs.update(result)
                     kwargs['scan'] = [s[b] for s in scan]
