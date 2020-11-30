@@ -237,6 +237,42 @@ class TestPtychoRecon(unittest.TestCase):
             },
         )
 
+    def test_consistent_lstsq_grad_opr(self):
+        """Check ptycho.solver.lstsq_grad for consistency."""
+        algorithm = 'lstsq_grad'
+        params = {
+            'subset_is_random': True,
+            'batch_size': int(self.data.shape[1] * 0.6),
+            'coherent_modes': 1,
+            'num_gpu': 1,
+        }
+        result = {
+            'psi':
+                np.ones_like(self.original),
+            'probe':
+                np.tile(np.ones_like(self.probe),
+                        (1, self.scan.shape[1], 1, 1, 1, 1)),
+            'scan':
+                self.scan,
+        }
+        error0 = np.inf
+        print()
+        for _ in range(16):
+            result = tike.ptycho.reconstruct(
+                **result,
+                **params,
+                data=self.data,
+                algorithm=algorithm,
+                num_iter=1,
+                # Only works when probe recovery is false because scaling
+                recover_probe=True,
+                recover_psi=True,
+            )
+            error1 = result['cost'][0]
+            print(f'{error1:.3e},')
+            # assert error1 < error0
+            error0 = error1
+
 
 if __name__ == '__main__':
     unittest.main()
