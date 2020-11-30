@@ -67,6 +67,7 @@ from tike.opt import randomizer
 from tike.pool import ThreadPool
 from tike.ptycho import solvers
 from .position import check_allowed_positions, get_padded_object
+from .probe import opr
 
 logger = logging.getLogger(__name__)
 
@@ -243,6 +244,16 @@ def reconstruct(
                         scan[g][b] = result['scan'][g]
                         probe[g][b if coherent_modes else 0] = result['probe'][
                             g]
+
+                if coherent_modes:
+                    for g in range(pool.num_workers):
+                        for b in range(num_batch):
+                            probe[g][b], S, U = opr(
+                                probe[g][b],
+                                n=coherent_modes,
+                                S=None if i < 1 else S,
+                                U=None if i < 1 else U,
+                            )
 
                 times.append(time.perf_counter() - start)
                 start = time.perf_counter()

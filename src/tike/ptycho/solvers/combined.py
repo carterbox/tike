@@ -1,7 +1,5 @@
 import logging
 
-import numpy as np
-
 from tike.opt import conjugate_gradient
 from ..position import update_positions_pd
 from ..probe import opr
@@ -146,9 +144,6 @@ def _update_probe(
         )
         if costm is not None:
             cost = costm
-
-    if coherent_modes:
-        probe = opr(probe, coherent_modes)
 
     if cost is not None:
         logger.info('%10s cost is %+12.5e, step length is %+12.5e', 'probe',

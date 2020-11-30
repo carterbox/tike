@@ -1,6 +1,8 @@
 import cupy as cp
 import numpy as np
 
+from tike.pca import pca_incremental, pca_eig
+
 
 def add_modes_random_phase(probe, nmodes):
     """Initialize additional probe modes by phase shifting the first mode.
@@ -117,7 +119,7 @@ def orthogonalize_eig(x):
     return x_new
 
 
-def opr(probe, n, alpha=0.5):
+def opr(probe, n, alpha=0.5, S=None, U=None):
     """Regularize multiple probes with orthogonal probe relaxation (OPR).
 
     Corrects for variable illumination across scan positions by regularizing
@@ -160,19 +162,17 @@ def opr(probe, n, alpha=0.5):
         probe.shape[-4] * probe.shape[-3],  # scan positions
         probe.shape[-2] * probe.shape[-1],  # probe dimensions
     )
+    assert probe.shape[-2] > n, 'There cannot be more modes than positions.'
 
-    # TODO: Use linalg.svds from CuPy>=9.0
-    # TODO: Lift this loop by contributing to CuPy
-    reg_probe = cp.empty_like(probe)
-    for i in range(probe.shape[0]):
-        u, v, h = cp.linalg.svd(probe[i], full_matrices=False)
-        # Keep only the first n components
-        principal_components = u[..., :n] @ cp.diag(v[:n]) @ h[:n, ...]
-        reg_probe[i] = alpha * probe[i] + (1 - alpha) * principal_components
+    S, U = pca_eig(probe, k=n)
+    compressed_probe = probe @ U @ U.conj().swapaxes(-1, -2)
+    compressed_probe /= cp.linalg.norm(compressed_probe, axis=-1, keepdims=True)
+    compressed_probe *= cp.linalg.norm(probe, axis=-1, keepdims=True)
+    reg_probe = alpha * probe + (1 - alpha) * compressed_probe
 
     reg_probe = reg_probe.reshape(*shape)
     reg_probe = cp.moveaxis(reg_probe, 1, -3)
-    return reg_probe
+    return reg_probe, S, U
 
 
 if __name__ == "__main__":

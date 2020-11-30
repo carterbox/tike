@@ -207,9 +207,6 @@ def lstsq_grad(
 
             probe_ += dir_probe * weighted_step / norm_psi
 
-            if coherent_modes:
-                probe_ = opr(probe_, coherent_modes)
-
             d += step * dPO
 
         if __debug__:
