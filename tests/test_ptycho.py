@@ -273,6 +273,11 @@ class TestPtychoRecon(unittest.TestCase):
             # assert error1 < error0
             error0 = error1
 
+    def test_invaid_algorithm_name(self):
+        """Check that wrong names are handled gracefully."""
+        with self.assertRaises(ValueError):
+            self.template_consistent_algorithm('divided')
+
 
 if __name__ == '__main__':
     unittest.main()
