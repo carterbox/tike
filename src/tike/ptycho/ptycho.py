@@ -304,7 +304,7 @@ def _make_mini_batches(
         The inputs shuffled in the same way.
     """
     # FIXME: fly positions must stay together
-    if subset_is_random:
+    if num_batch > 1 and subset_is_random:
         indices = randomizer.permutation(data.shape[1])
     else:
         indices = np.arange(data.shape[1])
