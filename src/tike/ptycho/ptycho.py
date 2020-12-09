@@ -259,6 +259,9 @@ def reconstruct(
                 times.append(time.perf_counter() - start)
                 start = time.perf_counter()
 
+                if not np.isfinite(costs[-1]):
+                    raise RuntimeError(f'Cost is not finite: {costs[-1]}')
+
                 # Check for early termination
                 if i > 0 and abs((costs[-1] - costs[-2]) / costs[-2]) < rtol:
                     logger.info(
