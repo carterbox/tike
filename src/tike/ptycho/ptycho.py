@@ -67,6 +67,7 @@ from tike.opt import randomizer
 from tike.pool import ThreadPool
 from tike.ptycho import solvers
 from .position import check_allowed_positions, get_padded_object
+from .probe import get_unique
 
 logger = logging.getLogger(__name__)
 
@@ -104,16 +105,60 @@ def gaussian(size, rin=0.8, rout=1.0):
     return img
 
 
+def compute_intensity(operator, psi, scan, probe, weights=None, fly=1):
+    leading = psi.shape[:-2]
+    intensity = 0
+    for m in range(probe.shape[-3]):
+        farplane = operator.fwd(
+            probe=get_unique(probe, m, weights),
+            scan=scan,
+            psi=psi,
+        )
+        intensity += np.sum(
+            np.square(np.abs(farplane)).reshape(
+                *leading,
+                scan.shape[-2] // fly,
+                fly,
+                operator.detector_shape,
+                operator.detector_shape,
+            ),
+            axis=-3,
+            keepdims=False,
+        )
+    return intensity
+
 def simulate(
         detector_shape,
         probe, scan,
         psi,
         fly=1,
+        weights=None,
         **kwargs
 ):  # yapf: disable
-    """Return real-valued detector counts of simulated ptychography data."""
-    assert scan.ndim == 3
-    assert psi.ndim == 3
+    """Return real-valued detector counts of simulated ptychography data.
+
+    Parameters
+    ----------
+    detector_shape : int
+        The pixel width of the detector.
+    probe : (..., POSI, COHER, INCOH, WIDE, HIGH) complex64
+        The common incoherent and coherent probes.
+    scan : (..., POSI, 2) float32
+        Coordinates of the minimum corner of the probe grid for each
+        measurement in the coordinate system of psi.
+    psi : (..., WIDE, HIGH) complex64
+        The complex wavefront modulation of the object.
+    weights : (..., POSI, COHER, INCOH) float32
+        Coherent probe weights for each position.
+    fly : int
+        The number of scan positions which combine for one detector frame.
+
+    Returns
+    -------
+    data : (..., FRAME, WIDE, HIGH) float32
+        The simulated intensity on the detector.
+
+    """
     check_allowed_positions(scan, psi, probe)
     with Ptycho(
             probe_shape=probe.shape[-1],
@@ -123,21 +168,12 @@ def simulate(
             ntheta=scan.shape[0],
             **kwargs,
     ) as operator:
-        data = 0
-        for mode in np.split(probe, probe.shape[-3], axis=-3):
-            farplane = operator.fwd(
-                probe=operator.asarray(mode, dtype='complex64'),
-                scan=operator.asarray(scan, dtype='float32'),
-                psi=operator.asarray(psi, dtype='complex64'),
-                **kwargs,
-            )
-            data += np.square(
-                np.linalg.norm(
-                    farplane.reshape(operator.ntheta, scan.shape[-2] // fly, -1,
-                                     detector_shape, detector_shape),
-                    ord=2,
-                    axis=2,
-                ))
+        scan = operator.asarray(scan, dtype='float32')
+        psi = operator.asarray(psi, dtype='complex64')
+        probe = operator.asarray(probe, dtype='complex64')
+        if weights is not None:
+            weights = operator.asarray(weights, dtype='float32')
+        data = compute_intensity(operator, psi, scan, probe, weights, fly)
         return operator.asnumpy(data.real)
 
 def reconstruct(
@@ -174,7 +210,7 @@ def reconstruct(
                 model=model,
         ) as operator, ThreadPool(num_gpu) as pool:
             logger.info("{} for {:,d} - {:,d} by {:,d} frames for {:,d} "
-                        "iterations.".format(algorithm, *data.shape[1:],
+                        "iterations.".format(algorithm, *data.shape[-3:],
                                              num_iter))
             # Divide the inputs into regions and mini-batches
             num_batch = 1

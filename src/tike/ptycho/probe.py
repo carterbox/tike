@@ -2,6 +2,38 @@ import cupy as cp
 import numpy as np
 
 
+def get_unique(common_probe, m=None, weights=None):
+    """Construct the m-th unique probe from a common_probe and weights.
+
+    Parameters
+    ----------
+    common_probe : (..., 1, COHER, INCOH, WIDE, HIGH) complex64
+        The common probe amongst all positions.
+    m : int or list(int)
+        The index of the requested probe
+    weights : (..., POSI, COHER, INCOH) float32
+        The relative intensity of the coherent probes at each position
+
+    Returns
+    -------
+    unique_probes : (..., POSI, 1, 1, WIDE, HIGH)
+    """
+    if m is None:
+        m = list(range(common_probe.shape[-3]))
+    if type(m) is not list:
+        m = [m]
+    if weights is None:
+        # The probe does not vary with position.
+        return common_probe[..., 0:1, m, :, :].copy()
+    else:
+        return np.sum(
+            common_probe[..., :, :, m, :, :] *
+            weights[..., :, :, m, None, None],
+            axis=-4,
+            keepdims=True,
+        )
+
+
 def add_modes_random_phase(probe, nmodes):
     """Initialize additional probe modes by phase shifting the first mode.
 
