@@ -1,3 +1,38 @@
+"""Functions related to creating and manipulating probe arrays.
+
+Ptychographic probes are represented as two separate components: a common probe
+whose values are the same for all positions and the varying component. The
+former is required as it provides the common probe constraint for ptychography
+and the later relaxes the former constraint to accomodate real-world
+illuminations which may vary with time.
+
+The common components consist of a single array representing multiple
+incoherent probes each of which may have an accompanying varying component.
+
+The varying components are stored sparsely as two arrays, so full varying
+probes are only reconstructed as needed. The first array is an array of
+principal components (coherent modes) that are shared for all positions and the
+second is an array of weights for each position.
+
+Each incoherent probe may have its own set of coherent modes. The full varying
+probe at a given position is reconstructed by adding the common probe to the
+weighted sum of the coherent modes.
+
+```
+unique_probe = common_probe + np.sum(weights * coherent_modes)
+```
+
+Design comments
+---------------
+In theory, the probe representation could be implemented in as little as two
+arrays: one with all of the shared components and one with the varying
+components where the common_probe becomes the first coherent mode. Choosing to
+keep the shared coherent_modes separate from the common_probe as a third array
+provides backwards compatability and allows for storing fewer coherent_modes in
+the case when only some incoherent probes are allowed to vary.
+
+"""
+
 import cupy as cp
 import numpy as np
 
