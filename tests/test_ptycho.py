@@ -294,5 +294,28 @@ class TestPtychoRecon(unittest.TestCase):
             self.template_consistent_algorithm('divided')
 
 
+class TestProbe(unittest.TestCase):
+
+    def test_coherent_probe(self):
+
+        leading = (2,)
+        wide = 18
+        high = 21
+        posi = 53
+        coher = 5
+
+        R = np.random.rand(*leading, posi, 1, 1, wide, high)
+        coherent_probe = np.random.rand(*leading, 1, coher, 1, wide, high)
+        weights = np.random.rand(*leading, posi)
+
+        new_probe = tike.ptycho.probe.update_coherent_probe(
+            R=R,
+            coherent_probe=coherent_probe,
+            weights=weights,
+        )
+
+        assert coherent_probe.shape == new_probe.shape
+
+
 if __name__ == '__main__':
     unittest.main()

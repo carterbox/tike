@@ -37,15 +37,17 @@ import cupy as cp
 import numpy as np
 
 
-def get_unique(common_probe, m=None, weights=None):
+def get_unique(common_probe, m=None, coherent_probe=None, weights=None):
     """Construct the m-th unique probe from a common_probe and weights.
 
     Parameters
     ----------
-    common_probe : (..., 1, COHER, INCOH, WIDE, HIGH) complex64
+    common_probe : (..., 1, 1, INCOH, WIDE, HIGH) complex64
         The common probe amongst all positions.
     m : int or list(int)
         The index of the requested probe
+    coherent_probe : (..., 1, COHER, INCOH, WIDE, HIGH) complex64
+        The coherent probe for all positions.
     weights : (..., POSI, COHER, INCOH) float32
         The relative intensity of the coherent probes at each position
 
@@ -57,16 +59,57 @@ def get_unique(common_probe, m=None, weights=None):
         m = list(range(common_probe.shape[-3]))
     if type(m) is not list:
         m = [m]
-    if weights is None:
-        # The probe does not vary with position.
-        return common_probe[..., 0:1, m, :, :].copy()
-    else:
-        return np.sum(
-            common_probe[..., :, :, m, :, :] *
-            weights[..., :, :, m, None, None],
+    unique_probe = common_probe[..., :, m, :, :].copy()
+    if weights is not None and coherent_probe is not None:
+        unique_probe += np.sum(
+            weights[..., m, None, None] * coherent_probe[..., m, :, :],
             axis=-4,
             keepdims=True,
         )
+    return unique_probe
+
+
+def update_coherent_probe(R, coherent_probe, weights, β=0.5):
+    """Update coherent probes using residual probe updates.
+
+    Literally equation 31 of Odstrcil et al (2018).
+
+    Parameters
+    ----------
+    R : (..., POSI, 1, 1, WIDE, HIGH) complex64
+        Residual probe updates; what's left after subtracting the common probe
+        update from the unique probe updates for each position
+    coherent_probe : (..., 1, COHER, 1, WIDE, HIGH) complex64
+        The coherent probe being updated.
+    β : float A relaxation constant that controls how quickly the coherent
+        probe modes are updated. Recommended to be < 1 for mini-batch updates.
+    weights : (..., POSI) float32
+        A vector whose elements are sums of the previous optimal updates for
+        each posiiton.
+
+    """
+    assert R.shape[-3] == R.shape[-4] == 1
+    assert coherent_probe.shape[-3] == 1 == coherent_probe.shape[-5]
+    assert R.shape[:-5] == coherent_probe.shape[:-5] == weights.shape[:-1]
+    assert weights.shape[-1] == R.shape[-5]
+    assert R.shape[-2:] == coherent_probe.shape[-2:]
+
+    Pshape = coherent_probe.shape
+    # For matrix multiplication need to flatten last axes:
+    # (..., WIDE * HIGH, 1)
+    coherent_probe = coherent_probe.reshape(*Pshape[:-2], -1).swapaxes(-2, -1)
+    # (..., WIDE * HIGH, POSI)
+    Rshape = R.shape
+    R = np.moveaxis(R.reshape(*Rshape[:-2], -1), -4, -1)
+    # (..., POSI, 1)
+    weights = weights[..., None, None, :, None]
+    norm_weights = np.linalg.norm(weights, axis=-2, keepdims=True)
+
+    # (31) coherent (eigen) mode update
+    coherent_probe = coherent_probe + β * R @ (
+        R.swapaxes(-2, -1) @ coherent_probe + weights) / norm_weights
+
+    return coherent_probe.swapaxes(-2, -1).reshape(*Pshape)
 
 
 def add_modes_random_phase(probe, nmodes):

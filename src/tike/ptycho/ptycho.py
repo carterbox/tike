@@ -105,12 +105,20 @@ def gaussian(size, rin=0.8, rout=1.0):
     return img
 
 
-def compute_intensity(operator, psi, scan, probe, weights=None, fly=1):
+def compute_intensity(
+    operator,
+    psi,
+    scan,
+    probe,
+    weights=None,
+    coherent_modes=None,
+    fly=1,
+):
     leading = psi.shape[:-2]
     intensity = 0
     for m in range(probe.shape[-3]):
         farplane = operator.fwd(
-            probe=get_unique(probe, m, weights),
+            probe=get_unique(probe, m, coherent_modes, weights),
             scan=scan,
             psi=psi,
         )
@@ -132,6 +140,7 @@ def simulate(
         probe, scan,
         psi,
         fly=1,
+        coherent_modes=None,
         weights=None,
         **kwargs
 ):  # yapf: disable
@@ -173,7 +182,8 @@ def simulate(
         probe = operator.asarray(probe, dtype='complex64')
         if weights is not None:
             weights = operator.asarray(weights, dtype='float32')
-        data = compute_intensity(operator, psi, scan, probe, weights, fly)
+        data = compute_intensity(operator, psi, scan, probe, weights,
+                                 coherent_modes, fly)
         return operator.asnumpy(data.real)
 
 def reconstruct(
