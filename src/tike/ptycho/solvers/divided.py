@@ -195,10 +195,12 @@ def lstsq_grad(
                 d = cp.mean(norm_phi, axis=(-1, -2), keepdims=True)
                 d += 0.1 * cp.mean(d, axis=-5, keepdims=True)
                 weight_update = (n / d).reshape(*weights[..., 0, 0].shape)
+                assert cp.all(cp.isfinite(weight_update))
 
                 # (33) The sum of all previous steps constrained to zero-mean
-                weights[..., c, m] += weight_update - cp.mean(
-                    weight_update,
+                weights[..., c, m] += weight_update
+                weights[..., c, m] -= cp.mean(
+                    weights[..., c, m],
                     axis=-1,
                     keepdims=True,
                 )
