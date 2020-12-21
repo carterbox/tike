@@ -155,6 +155,41 @@ def add_modes_random_phase(probe, nmodes):
     return all_modes
 
 
+def simulate_variable_weights(scan, coherent_probe):
+    """Generate weights for coherent probe that follow random sinusoid.
+
+    The amplitude of the of weights is 1, the phase shift is (0, 2π], and the
+    period is at most one full scan.
+    """
+    N = scan.shape[1]
+    x = np.arange(N)[..., :, None, None]
+    period = N * np.random.rand(*coherent_probe.shape[:-2])
+    phase = 2 * np.pi * np.random.rand(*coherent_probe.shape[:-2])
+    return np.sin(2 * np.pi / period * x - phase)
+
+
+def init_variable_probe(scan, common_probe, N):
+    """Initialize arrays for N coherent modes."""
+
+    coherent_probe = tike.random.numpy_complex(
+        *common_probe.shape[:-4],
+        N,
+        *common_probe.shape[-3:],
+    ).astype('complex64')
+    coherent_probe /= np.linalg.norm(coherent_probe,
+                                     axis=(-2, -1),
+                                     keepdims=True)
+
+    weights = 1e-6 * np.random.rand(
+        *scan.shape[:-1],
+        N,
+        common_probe.shape[-3],
+    ).astype('float32')
+    weights -= np.mean(weights, axis=-3, keepdims=True)
+
+    return coherent_probe, weights
+
+
 # TODO: Possibly a faster implementation would use QR decomposition, but numpy
 # only support 2D inputs for QR as of 2020.04.
 def orthogonalize_gs(x, ndim=1):
