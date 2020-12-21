@@ -179,10 +179,10 @@ def lstsq_grad(
                         R,
                         coherent_probe[..., c:c + 1, m:m + 1, :, :],
                         weights[..., c, m],
-                        β=0.1,  # TODO: Adjust according to mini-batch size
+                        β=0.01,  # TODO: Adjust according to mini-batch size
                     )
 
-                # Determine new weights for the updated
+                # Determine new weights for the updated coherent probe
                 phi = patches.copy()
                 phi[..., pad:end, pad:end] *= coherent_probe[..., c:c + 1,
                                                              m:m + 1, :, :]
