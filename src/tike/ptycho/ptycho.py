@@ -193,6 +193,7 @@ def reconstruct(
         psi=None, num_gpu=1, num_iter=1, rtol=-1,
         model='gaussian', cost=None, times=None,
         batch_size=None, subset_is_random=None,
+        coherent_probe=None, weights=None,
         **kwargs
 ):  # yapf: disable
     """Solve the ptychography problem using the given `algorithm`.
@@ -230,25 +231,32 @@ def reconstruct(
                     int(data.shape[1] / batch_size / pool.num_workers),
                 )
             odd_pool = pool.num_workers % 2
-            data, scan = split_by_scan_grid(
+            data, scan, weights = split_by_scan_grid(
                 data,
                 scan,
                 (
                     pool.num_workers if odd_pool else pool.num_workers // 2,
                     1 if odd_pool else 2,
                 ),
+                weights=weights,
             )
-            data, scan = zip(*pool.map(
+            data, scan, weights = zip(*pool.map(
                 _make_mini_batches,
                 data,
                 scan,
+                weights,
                 num_batch=num_batch,
                 subset_is_random=subset_is_random,
             ))
 
             result = {
-                'psi': pool.bcast(psi.astype('complex64')),
-                'probe': pool.bcast(probe.astype('complex64')),
+                'psi':
+                    pool.bcast(psi.astype('complex64')),
+                'probe':
+                    pool.bcast(probe.astype('complex64')),
+                'coherent_probe':
+                    pool.bcast(coherent_probe.astype('complex64'))
+                    if coherent_probe is not None else None,
             }
             for key, value in kwargs.items():
                 if np.ndim(value) > 0:
@@ -274,6 +282,7 @@ def reconstruct(
                 for b in range(num_batch):
                     kwargs.update(result)
                     kwargs['scan'] = [s[b] for s in scan]
+                    kwargs['weights'] = [w[b] for w in weights]
                     result = getattr(solvers, algorithm)(
                         operator,
                         pool,
@@ -284,6 +293,8 @@ def reconstruct(
                         costs.append(result['cost'])
                     for g in range(pool.num_workers):
                         scan[g][b] = result['scan'][g]
+                        weights[g][b] = result['weights'][
+                            g] if 'weights' in result else None
                     probe = result['probe']
 
                 times.append(time.perf_counter() - start)
@@ -312,7 +323,13 @@ def reconstruct(
                          f"\tAvailable algorithms are : {solvers.__all__}")
 
 
-def _make_mini_batches(data, scan, num_batch, subset_is_random=True):
+def _make_mini_batches(
+    data,
+    scan,
+    weights=None,
+    num_batch=1,
+    subset_is_random=True,
+):
     """Divide ptycho-inputs into mini-batches along position dimension.
 
     Parameters
@@ -332,10 +349,13 @@ def _make_mini_batches(data, scan, num_batch, subset_is_random=True):
     else:
         indices = np.arange(data.shape[1])
     indices = np.array_split(indices, num_batch)
-    return (
-        [cp.asarray(data[:, i], dtype='float32') for i in indices],
-        [cp.asarray(scan[:, i], dtype='float32') for i in indices],
-    )
+    data = [cp.asarray(data[:, i], dtype='float32') for i in indices]
+    scan = [cp.asarray(scan[:, i], dtype='float32') for i in indices]
+    if weights is not None:
+        weights = [cp.asarray(weights[:, i], dtype='float32') for i in indices]
+    else:
+        weights = [None for i in indices]
+    return data, scan, weights
 
 
 def _rescale_obj_probe(operator, pool, data, psi, scan, probe):
@@ -353,7 +373,7 @@ def _rescale_obj_probe(operator, pool, data, psi, scan, probe):
     return probe
 
 
-def split_by_scan_grid(data, scan, shape, fly=1):
+def split_by_scan_grid(data, scan, shape, weights=None, fly=1):
     """ split the field of view into a 2D grid.
 
     Mask divide the data into a 2D grid of spatially contiguous regions.
@@ -381,7 +401,11 @@ def split_by_scan_grid(data, scan, shape, fly=1):
     mask = [np.logical_and(*pair) for pair in product(vstripes, hstripes)]
     data = [data[:, m] for m in mask]
     scan = [scan[:, m] for m in mask]
-    return data, scan
+    if weights is not None:
+        weights = [weights[:, m] for m in mask]
+    else:
+        weights = [None for m in mask]
+    return data, scan, weights
 
 
 def split_by_scan_stripes(scan, n, fly=1, axis=0):
