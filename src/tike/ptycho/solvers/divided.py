@@ -3,7 +3,7 @@ import logging
 import cupy as cp
 
 from ..position import update_positions_pd
-from ..probe import orthogonalize_eig
+from ..probe import orthogonalize_eig, get_unique, update_coherent_probe
 
 logger = logging.getLogger(__name__)
 
@@ -14,6 +14,8 @@ def lstsq_grad(
     recover_psi=True, recover_probe=False, recover_positions=False,
     cg_iter=4,
     cost=None,
+    coherent_probe=None,
+    weights=None,
 ):  # yapf: disable
     """Solve the ptychography problem using Odstrcil et al's approach.
 
@@ -39,6 +41,13 @@ def lstsq_grad(
     probe = probe[0]
     scan_ = scan[0]
     psi = psi[0]
+    weights = weights[0]
+    coherent_probe = coherent_probe[0]
+
+    common_probe = probe
+    unique_probe = get_unique(probe,
+                              coherent_probe=coherent_probe,
+                              weights=weights)
 
     # Compute the diffraction patterns for all of the probe modes at once.
     # We need access to all of the modes of a position to solve the phase
@@ -55,7 +64,7 @@ def lstsq_grad(
 
     nearplane = op.xp.tile(patches, reps=(1, 1, 1, probe.shape[-3], 1, 1))
     pad, end = op.diffraction.pad, op.diffraction.end
-    nearplane[..., pad:end, pad:end] *= probe
+    nearplane[..., pad:end, pad:end] *= unique_probe
 
     # Solve the farplane phase problem
     farplane = op.propagation.fwd(nearplane, overwrite=False)
@@ -87,7 +96,8 @@ def lstsq_grad(
 
     for m in range(probe.shape[-3]):
         chi_ = chi[m]
-        probe_ = probe[..., m:m + 1, :, :]
+        probe_ = common_probe[..., m:m + 1, :, :]
+        uprobe_ = unique_probe[..., m:m + 1, :, :]
 
         logger.info('%10s cost is %+12.5e', 'nearplane',
                     cp.linalg.norm(cp.ravel(chi_)))
@@ -97,12 +107,12 @@ def lstsq_grad(
         if recover_psi:
             # FIXME: Implement conjugate gradient
             grad_psi = chi_.copy()
-            grad_psi[..., pad:end, pad:end] *= cp.conj(probe_)
+            grad_psi[..., pad:end, pad:end] *= cp.conj(uprobe_)
 
             probe_intensity = cp.ones(
                 (*scan_.shape[:2], 1, 1, 1, 1),
                 dtype='complex64',
-            ) * cp.square(cp.abs(probe_))
+            ) * cp.square(cp.abs(uprobe_))
 
             norm_probe = op.diffraction._patch(
                 patches=probe_intensity,
@@ -128,7 +138,7 @@ def lstsq_grad(
             )
             dOP = dOP.reshape(op.ntheta, scan_.shape[-2], 1, 1,
                               op.detector_shape, op.detector_shape)
-            dOP[..., pad:end, pad:end] *= probe_
+            dOP[..., pad:end, pad:end] *= uprobe_
 
             updates.append(dOP.view('float32').reshape(lstsq_shape))
 
@@ -142,21 +152,64 @@ def lstsq_grad(
             patches = patches.reshape(op.ntheta, scan_.shape[-2], 1, 1,
                                       op.detector_shape, op.detector_shape)
 
+            # (24a) steepest descent update
             grad_probe = (chi_ * xp.conj(patches))[..., pad:end, pad:end]
 
             psi_intensity = cp.square(cp.abs(patches[..., pad:end, pad:end]))
-
             norm_psi = cp.sum(psi_intensity, axis=1, keepdims=True) + 1e-6
 
+            # (25a) common update direction
             dir_probe = cp.sum(grad_probe, axis=1, keepdims=True) / norm_psi
 
+            # ΔPO from (21)
             dPO = patches.copy()
             dPO[..., pad:end, pad:end] *= dir_probe
 
             updates.append(dPO.view('float32').reshape(lstsq_shape))
 
+        if recover_probe and coherent_probe is not None:
+            # (30) residual probe updates
+            R = grad_probe - cp.mean(grad_probe, axis=-5, keepdims=True)
+
+            for c in range(coherent_probe.shape[-4]):
+
+                coherent_probe[
+                    ..., c:c + 1, m:m + 1, :, :] = update_coherent_probe(
+                        R,
+                        coherent_probe[..., c:c + 1, m:m + 1, :, :],
+                        weights[..., c, m],
+                        β=0.1,  # TODO: Adjust according to mini-batch size
+                    )
+
+                # Determine new weights for the updated
+                phi = patches.copy()
+                phi[..., pad:end, pad:end] *= coherent_probe[..., c:c + 1,
+                                                             m:m + 1, :, :]
+                n = cp.mean(
+                    cp.real(chi_ * phi.conj()),
+                    axis=(-1, -2),
+                    keepdims=True,
+                )
+                norm_phi = cp.square(cp.abs(phi))
+                d = cp.mean(norm_phi, axis=(-1, -2), keepdims=True)
+                d += 0.1 * cp.mean(d, axis=-5, keepdims=True)
+                weight_update = (n / d).reshape(*weights[..., 0, 0].shape)
+
+                # (33) The sum of all previous steps constrained to zero-mean
+                weights[..., c, m] += weight_update - cp.mean(
+                    weight_update,
+                    axis=-1,
+                    keepdims=True,
+                )
+
+                # Subtract projection of R onto new probe from R
+                R -= _vector_projection(R,
+                                        coherent_probe[..., c:c + 1,
+                                                       m:m + 1, :, :],
+                                        axis=(-2, -1))
+
         # Use least-squares to find the optimal step sizes simultaneously
-        # for all search directions.
+        # for all search directions. (21)
         if updates:
             A = cp.stack(updates, axis=-1)
             b = chi_.view('float32').reshape(lstsq_shape)
@@ -183,9 +236,10 @@ def lstsq_grad(
             step = steps[..., num_steps, None, None]
             num_steps += 1
 
+            # Common probe update (27a)
             weighted_step = cp.sum(step * psi_intensity, axis=1, keepdims=True)
-
             probe_ += dir_probe * weighted_step / norm_psi
+
             d += step * dPO
 
         if __debug__:
@@ -195,12 +249,22 @@ def lstsq_grad(
     if probe.shape[-3] > 1:
         probe = orthogonalize_eig(probe)
 
-    return {
+    result = {
         'psi': [psi],
         'probe': [probe],
         'cost': cost,
         'scan': scan,
     }
+    if coherent_probe is not None:
+        result['coherent_probe'] = [coherent_probe]
+        result['weights'] = [weights]
+    return result
+
+
+def _vector_projection(a, b, axis=None):
+    """Return the projection of a onto b for vector along given axis."""
+    bh = b / cp.linalg.norm(b, axis=axis, keepdims=True)
+    return (a.conj() * bh).sum(axis=axis, keepdims=True) * bh
 
 
 def _lstsq(a, b):

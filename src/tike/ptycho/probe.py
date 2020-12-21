@@ -59,17 +59,17 @@ def get_unique(common_probe, m=None, coherent_probe=None, weights=None):
         m = list(range(common_probe.shape[-3]))
     if type(m) is not list:
         m = [m]
-    unique_probe = common_probe[..., :, m, :, :].copy()
     if weights is not None and coherent_probe is not None:
-        unique_probe += np.sum(
+        return common_probe[..., :, m, :, :] + np.sum(
             weights[..., m, None, None] * coherent_probe[..., m, :, :],
             axis=-4,
             keepdims=True,
         )
-    return unique_probe
+    else:
+        return common_probe[..., :, m, :, :].copy()
 
 
-def update_coherent_probe(R, coherent_probe, weights, β=0.5):
+def update_coherent_probe(R, coherent_probe, weights, β=0.1):
     """Update coherent probes using residual probe updates.
 
     Literally equation 31 of Odstrcil et al (2018).
@@ -93,6 +93,10 @@ def update_coherent_probe(R, coherent_probe, weights, β=0.5):
     assert R.shape[:-5] == coherent_probe.shape[:-5] == weights.shape[:-1]
     assert weights.shape[-1] == R.shape[-5]
     assert R.shape[-2:] == coherent_probe.shape[-2:]
+    assert np.abs(
+        np.sum(weights)) < 1e-12, ('Average coherent_probe weight must be zero;'
+                                   ' this keeps common updates in common_probe',
+                                   np.sum(weights))
 
     Pshape = coherent_probe.shape
     # For matrix multiplication need to flatten last axes:
@@ -104,10 +108,17 @@ def update_coherent_probe(R, coherent_probe, weights, β=0.5):
     # (..., POSI, 1)
     weights = weights[..., None, None, :, None]
     norm_weights = np.linalg.norm(weights, axis=-2, keepdims=True)
+    if np.all(norm_weights == 0):
+        raise ValueError('coherent_probe weights cannot all be zero?')
+
+    # FIXME: What happens when weights is zero!?
 
     # (31) coherent (eigen) mode update
     coherent_probe = coherent_probe + β * R @ (
-        R.swapaxes(-2, -1) @ coherent_probe + weights) / norm_weights
+        R.swapaxes(-2, -1).conj() @ coherent_probe + weights) / norm_weights
+    assert np.all(np.isfinite(coherent_probe))
+
+    coherent_probe /= np.linalg.norm(coherent_probe, axis=-2, keepdims=True)
 
     return coherent_probe.swapaxes(-2, -1).reshape(*Pshape)
 

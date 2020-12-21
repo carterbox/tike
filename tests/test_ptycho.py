@@ -54,6 +54,7 @@ import unittest
 import numpy as np
 
 import tike.ptycho
+import tike.random
 
 __author__ = "Daniel Ching"
 __copyright__ = "Copyright (c) 2018, UChicago Argonne, LLC."
@@ -224,8 +225,8 @@ class TestPtychoRecon(unittest.TestCase):
             algorithm=algorithm,
             num_iter=1,
         )
+        params.update(result)
         result = tike.ptycho.reconstruct(
-            **result,
             **params,
             data=self.data,
             algorithm=algorithm,
@@ -288,6 +289,30 @@ class TestPtychoRecon(unittest.TestCase):
             },
         )
 
+    def test_consistent_lstsq_grad_variable_probe(self):
+        """Check ptycho.solver.lstsq_grad for consistency."""
+
+        coherent_probe = tike.random.numpy_complex(
+            *self.scan.shape[:-2], 1, 1, 2,
+            *self.probe.shape[-2:]).astype('complex64')
+        weights = 1e-6 * np.random.rand(*self.scan.shape[:-1], *
+                                        coherent_probe.shape[-4:-2])
+        weights -= np.mean(weights, axis=-3, keepdims=True)
+        weights = weights.astype('float32')
+
+        self.template_consistent_algorithm(
+            'lstsq_grad',
+            params={
+                # 'subset_is_random': True,
+                # 'batch_size': int(self.data.shape[1] * 0.6),
+                'num_gpu': 1,
+                'recover_probe': True,
+                'recover_psi': True,
+                'coherent_probe': coherent_probe,
+                'weights': weights,
+            },
+        )
+
     def test_invaid_algorithm_name(self):
         """Check that wrong names are handled gracefully."""
         with self.assertRaises(ValueError):
@@ -307,6 +332,7 @@ class TestProbe(unittest.TestCase):
         R = np.random.rand(*leading, posi, 1, 1, wide, high)
         coherent_probe = np.random.rand(*leading, 1, coher, 1, wide, high)
         weights = np.random.rand(*leading, posi)
+        weights -= np.mean(weights)
 
         new_probe = tike.ptycho.probe.update_coherent_probe(
             R=R,
