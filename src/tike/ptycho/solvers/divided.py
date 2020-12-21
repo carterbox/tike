@@ -41,8 +41,9 @@ def lstsq_grad(
     probe = probe[0]
     scan_ = scan[0]
     psi = psi[0]
-    weights = weights[0]
-    coherent_probe = coherent_probe[0]
+    if coherent_probe is not None:
+        weights = weights[0]
+        coherent_probe = coherent_probe[0]
 
     common_probe = probe
     unique_probe = get_unique(probe,
