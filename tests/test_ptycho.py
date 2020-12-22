@@ -129,17 +129,26 @@ class TestPtychoRecon(unittest.TestCase):
         # Create a stack of phase-only images
         phase = np.stack(
             [libimage.load('satyre', width),
-             libimage.load('coins', width)],
+             libimage.load('satyre', width)],
             axis=0,
         )
-        original = np.exp(1j * phase * np.pi)
+        amplitude = np.stack(
+            [
+                1 - 0 * libimage.load('coins', width),
+                1 - libimage.load('coins', width)
+            ],
+            axis=0,
+        )
+        original = amplitude * np.exp(1j * phase * np.pi)
         self.original = original.astype('complex64')
         leading = self.original.shape[:-2]
 
         # Create a multi-probe with gaussian amplitude decreasing as 1/N
         phase = np.stack(
-            [libimage.load('cryptomeria', pw),
-             libimage.load('bombus', pw)],
+            [
+                1 - libimage.load('cryptomeria', pw),
+                1 - libimage.load('bombus', pw)
+            ],
             axis=0,
         )
         weights = 1.0 / np.arange(1, len(phase) + 1)[:, None, None]
@@ -150,11 +159,12 @@ class TestPtychoRecon(unittest.TestCase):
             (*leading, 1, coherent, 1, 1, 1),
         )
 
+        pad = 2
         v, h = np.meshgrid(
-            np.linspace(1, original.shape[-2]-pw-1, 13, endpoint=True),
-            np.linspace(1, original.shape[-1]-pw-1, 13, endpoint=True),
-            indexing='ij'
-        )  # yapf: disable
+            np.linspace(pad, original.shape[-2] - pw - pad, 13, endpoint=True),
+            np.linspace(pad, original.shape[-1] - pw - pad, 13, endpoint=True),
+            indexing='ij',
+        )
         scan = np.stack((np.ravel(v), np.ravel(h)), axis=1)
         self.scan = np.tile(
             scan.astype('float32'),
