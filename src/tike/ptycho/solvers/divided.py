@@ -169,6 +169,7 @@ def lstsq_grad(
             updates.append(dPO.view('float32').reshape(lstsq_shape))
 
         if recover_probe and coherent_probe is not None:
+            logger.info('Updating coherent probes')
             # (30) residual probe updates
             R = grad_probe - cp.mean(grad_probe, axis=-5, keepdims=True)
 
