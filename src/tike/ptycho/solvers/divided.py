@@ -2,6 +2,8 @@ import logging
 
 import cupy as cp
 
+from tike.linalg import lstsq, projection
+
 from ..position import update_positions_pd
 from ..probe import orthogonalize_eig, get_unique, update_coherent_probe
 
@@ -207,17 +209,16 @@ def lstsq_grad(
                 )
 
                 # Subtract projection of R onto new probe from R
-                R -= _vector_projection(R,
-                                        coherent_probe[..., c:c + 1,
-                                                       m:m + 1, :, :],
-                                        axis=(-2, -1))
+                R -= projection(R,
+                                coherent_probe[..., c:c + 1, m:m + 1, :, :],
+                                axis=(-2, -1))
 
         # Use least-squares to find the optimal step sizes simultaneously
         # for all search directions. (21)
         if updates:
             A = cp.stack(updates, axis=-1)
             b = chi_.view('float32').reshape(lstsq_shape)
-            steps = _lstsq(A, b)
+            steps = lstsq(A, b)
         num_steps = 0
         d = 0
 
@@ -263,41 +264,3 @@ def lstsq_grad(
         result['coherent_probe'] = [coherent_probe]
         result['weights'] = [weights]
     return result
-
-
-def _vector_projection(a, b, axis=None):
-    """Return the projection of a onto b for vector along given axis."""
-    bh = b / cp.linalg.norm(b, axis=axis, keepdims=True)
-    return (a.conj() * bh).sum(axis=axis, keepdims=True) * bh
-
-
-def _lstsq(a, b):
-    """Return the least-squares solution for a @ x = b.
-
-    This implementation, unlike cp.linalg.lstsq, allows a stack of matricies to
-    be processed simultaneously. The input sizes of the matricies are as
-    follows:
-        a (..., M, N)
-        b (..., M)
-        x (...,    N)
-
-    ...seealso:: https://github.com/numpy/numpy/issues/8720
-                 https://github.com/cupy/cupy/issues/3062
-    """
-    # TODO: Using 'out' parameter of cp.matmul() may reduce memory footprint
-    assert a.shape[:-1] == b.shape, (f"Leading dims of a {a.shape}"
-                                     f"and b {b.shape} must be same!")
-    aT = a.swapaxes(-2, -1)
-    x = cp.linalg.inv(aT @ a) @ aT @ b[..., None]
-    return x[..., 0]
-
-
-if __name__ == "__main__":
-    N = (3, 4)
-
-    a = cp.random.rand(*N, 5, 2) + 1j * cp.random.rand(*N, 5, 2)
-    b = cp.random.rand(*N, 5) + 1j * cp.random.rand(*N, 5)
-
-    x = _lstsq(a.astype('complex64'), b.astype('complex64'))
-
-    assert x.shape == (*N, 2)
