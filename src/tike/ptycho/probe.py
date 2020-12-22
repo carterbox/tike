@@ -36,6 +36,8 @@ the case when only some incoherent probes are allowed to vary.
 import cupy as cp
 import numpy as np
 
+import tike.random
+
 
 def get_unique(common_probe, m=None, coherent_probe=None, weights=None):
     """Construct the m-th unique probe from a common_probe and weights.
@@ -93,10 +95,6 @@ def update_coherent_probe(R, coherent_probe, weights, β=0.1):
     assert R.shape[:-5] == coherent_probe.shape[:-5] == weights.shape[:-1]
     assert weights.shape[-1] == R.shape[-5]
     assert R.shape[-2:] == coherent_probe.shape[-2:]
-    assert np.abs(
-        np.sum(weights)) < 1e-12, ('Average coherent_probe weight must be zero;'
-                                   ' this keeps common updates in common_probe',
-                                   np.sum(weights))
 
     Pshape = coherent_probe.shape
     # For matrix multiplication need to flatten last axes:
