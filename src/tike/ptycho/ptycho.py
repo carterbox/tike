@@ -295,7 +295,6 @@ def reconstruct(
                         scan[g][b] = result['scan'][g]
                         weights[g][b] = result['weights'][
                             g] if 'weights' in result else None
-                    probe = result['probe']
 
                 times.append(time.perf_counter() - start)
                 start = time.perf_counter()
@@ -311,7 +310,13 @@ def reconstruct(
                 list(pool.map(cp.concatenate, scan, axis=1)),
                 axis=1,
             )
-            result['probe'] = probe[0]
+            if 'weights' in result:
+                result['weights'] = pool.gather(
+                    list(pool.map(cp.concatenate, weights, axis=1)),
+                    axis=1,
+                )
+                result['coherent_probe'] = result['coherent_probe'][0]
+            result['probe'] = result['probe'][0]
             result['cost'] = operator.asarray(costs)
             result['times'] = operator.asarray(times)
             for k, v in result.items():
