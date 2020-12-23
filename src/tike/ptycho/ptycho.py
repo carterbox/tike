@@ -55,7 +55,7 @@ __all__ = [
     "simulate",
 ]
 
-from itertools import product
+from itertools import product, chain
 import logging
 import time
 
@@ -231,7 +231,9 @@ def reconstruct(
                     int(data.shape[1] / batch_size / pool.num_workers),
                 )
             odd_pool = pool.num_workers % 2
-            data, scan, weights = split_by_scan_grid(
+            order = np.arange(data.shape[1])
+            order, data, scan, weights = split_by_scan_grid(
+                order,
                 data,
                 scan,
                 (
@@ -240,8 +242,9 @@ def reconstruct(
                 ),
                 weights=weights,
             )
-            data, scan, weights = zip(*pool.map(
+            order, data, scan, weights = zip(*pool.map(
                 _make_mini_batches,
+                order,
                 data,
                 scan,
                 weights,
@@ -306,15 +309,17 @@ def reconstruct(
                         "iterations.", rtol, i)
                     break
 
+            reorder = np.argsort(
+                np.concatenate(list(chain.from_iterable(order))))
             result['scan'] = pool.gather(
                 list(pool.map(cp.concatenate, scan, axis=1)),
                 axis=1,
-            )
+            )[:, reorder]
             if 'weights' in result:
                 result['weights'] = pool.gather(
                     list(pool.map(cp.concatenate, weights, axis=1)),
                     axis=1,
-                )
+                )[:, reorder]
                 result['coherent_probe'] = result['coherent_probe'][0]
             result['probe'] = result['probe'][0]
             result['cost'] = operator.asarray(costs)
@@ -329,6 +334,7 @@ def reconstruct(
 
 
 def _make_mini_batches(
+    order,
     data,
     scan,
     weights=None,
@@ -348,19 +354,21 @@ def _make_mini_batches(
     data, scan
         The inputs shuffled in the same way.
     """
+    logger.info(f'Split data into {num_batch} mini-batches.')
     # FIXME: fly positions must stay together
     if subset_is_random:
         indices = randomizer.permutation(data.shape[1])
     else:
         indices = np.arange(data.shape[1])
     indices = np.array_split(indices, num_batch)
+    order = [order[i] for i in indices]
     data = [cp.asarray(data[:, i], dtype='float32') for i in indices]
     scan = [cp.asarray(scan[:, i], dtype='float32') for i in indices]
     if weights is not None:
         weights = [cp.asarray(weights[:, i], dtype='float32') for i in indices]
     else:
         weights = [None for i in indices]
-    return data, scan, weights
+    return order, data, scan, weights
 
 
 def _rescale_obj_probe(operator, pool, data, psi, scan, probe):
@@ -378,7 +386,7 @@ def _rescale_obj_probe(operator, pool, data, psi, scan, probe):
     return probe
 
 
-def split_by_scan_grid(data, scan, shape, weights=None, fly=1):
+def split_by_scan_grid(order, data, scan, shape, weights=None, fly=1):
     """ split the field of view into a 2D grid.
 
     Mask divide the data into a 2D grid of spatially contiguous regions.
@@ -404,13 +412,14 @@ def split_by_scan_grid(data, scan, shape, weights=None, fly=1):
     vstripes = split_by_scan_stripes(scan, shape[0], axis=0, fly=fly)
     hstripes = split_by_scan_stripes(scan, shape[1], axis=1, fly=fly)
     mask = [np.logical_and(*pair) for pair in product(vstripes, hstripes)]
+    order = [order[m] for m in mask]
     data = [data[:, m] for m in mask]
     scan = [scan[:, m] for m in mask]
     if weights is not None:
         weights = [weights[:, m] for m in mask]
     else:
         weights = [None for m in mask]
-    return data, scan, weights
+    return order, data, scan, weights
 
 
 def split_by_scan_stripes(scan, n, fly=1, axis=0):
