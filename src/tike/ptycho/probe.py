@@ -74,7 +74,10 @@ def get_unique(common_probe, m=None, coherent_probe=None, weights=None):
 def update_coherent_probe(R, coherent_probe, weights, β=0.1):
     """Update coherent probes using residual probe updates.
 
-    Literally equation 31 of Odstrcil et al (2018).
+    This update is copied from the source code of ptychoshelves. It is similar
+    to but not the same as equation (31) described by Odstrcil et al (2018). It
+    is is also different from updates described in Odstrcil et al (2016).
+    However, they aim to correct for probe variation.
 
     Parameters
     ----------
@@ -89,6 +92,15 @@ def update_coherent_probe(R, coherent_probe, weights, β=0.1):
         A vector whose elements are sums of the previous optimal updates for
         each posiiton.
 
+    References
+    ----------
+    M. Odstrcil, P. Baksh, S. A. Boden, R. Card, J. E. Chad, J. G. Frey, W. S.
+    Brocklesby, "Ptychographic coherent diffractive imaging with orthogonal
+    probe relaxation." Opt. Express 24, 8360 (2016). doi: 10.1364/OE.24.008360
+
+    Michal Odstrcil, Andreas Menzel, and Manuel Guizar-Sicaros. Iterative
+    least-squares solver for generalized maximum-likelihood ptychography.
+    Optics Express. 2018.
     """
     assert R.shape[-3] == R.shape[-4] == 1
     assert coherent_probe.shape[-3] == 1 == coherent_probe.shape[-5]
@@ -96,29 +108,28 @@ def update_coherent_probe(R, coherent_probe, weights, β=0.1):
     assert weights.shape[-1] == R.shape[-5]
     assert R.shape[-2:] == coherent_probe.shape[-2:]
 
-    Pshape = coherent_probe.shape
-    # For matrix multiplication need to flatten last axes:
-    # (..., WIDE * HIGH, 1)
-    coherent_probe = coherent_probe.reshape(*Pshape[:-2], -1).swapaxes(-2, -1)
-    # (..., WIDE * HIGH, POSI)
-    Rshape = R.shape
-    R = np.moveaxis(R.reshape(*Rshape[:-2], -1), -4, -1)
-    # (..., POSI, 1)
-    weights = weights[..., None, None, :, None]
-    norm_weights = np.linalg.norm(weights, axis=-2, keepdims=True)
+    # (..., POSI, 1, 1, 1, 1) to match other arrays
+    weights = weights[..., None, None, None, None]
+    norm_weights = np.linalg.norm(weights, axis=-5, keepdims=True)**2
     if np.all(norm_weights == 0):
         raise ValueError('coherent_probe weights cannot all be zero?')
 
     # FIXME: What happens when weights is zero!?
-
-    # (31) coherent (eigen) mode update
-    coherent_probe = coherent_probe + β * R @ (
-        R.swapaxes(-2, -1).conj() @ coherent_probe + weights) / norm_weights
+    proj = (np.real(R.conj() * coherent_probe) + weights) / norm_weights
+    update = np.mean(
+        R * np.mean(proj, axis=(-2, -1), keepdims=True),
+        axis=-5,
+        keepdims=True,
+    )
+    coherent_probe += β * update / np.linalg.norm(
+        update, axis=(-2, -1), keepdims=True)
     assert np.all(np.isfinite(coherent_probe))
 
-    coherent_probe /= np.linalg.norm(coherent_probe, axis=-2, keepdims=True)
+    coherent_probe /= np.linalg.norm(coherent_probe,
+                                     axis=(-2, -1),
+                                     keepdims=True)
 
-    return coherent_probe.swapaxes(-2, -1).reshape(*Pshape)
+    return coherent_probe
 
 
 def add_modes_random_phase(probe, nmodes):

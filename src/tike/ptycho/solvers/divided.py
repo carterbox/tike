@@ -33,7 +33,7 @@ def lstsq_grad(
 
     References
     ----------
-    Michal Odstrcil, Andreas Menzel, and Manuel Guizar-Sicaros. Iteraive
+    Michal Odstrcil, Andreas Menzel, and Manuel Guizar-Sicaros. Iterative
     least-squares solver for generalized maximum-likelihood ptychography.
     Optics Express. 2018.
 
@@ -208,10 +208,13 @@ def lstsq_grad(
                     keepdims=True,
                 )
 
-                # Subtract projection of R onto new probe from R
-                R -= projection(R,
-                                coherent_probe[..., c:c + 1, m:m + 1, :, :],
-                                axis=(-2, -1))
+                if coherent_probe.shape[-4] <= c + 1:
+                    # Subtract projection of R onto new probe from R
+                    R -= projection(
+                        R,
+                        coherent_probe[..., c:c + 1, m:m + 1, :, :],
+                        axis=(-2, -1),
+                    )
 
         # Use least-squares to find the optimal step sizes simultaneously
         # for all search directions. (21)
