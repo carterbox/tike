@@ -143,7 +143,7 @@ def lstsq_grad(
                               op.detector_shape, op.detector_shape)
             dOP[..., pad:end, pad:end] *= uprobe_
 
-            updates.append(dOP.view('float32').reshape(lstsq_shape))
+            updates.append(dOP)
 
         if recover_probe:
             patches = op.diffraction._patch(
@@ -168,7 +168,7 @@ def lstsq_grad(
             dPO = patches.copy()
             dPO[..., pad:end, pad:end] *= dir_probe
 
-            updates.append(dPO.view('float32').reshape(lstsq_shape))
+            updates.append(dPO)
 
         if recover_probe and coherent_probe is not None:
             logger.info('Updating coherent probes')
@@ -217,11 +217,28 @@ def lstsq_grad(
                     )
 
         # Use least-squares to find the optimal step sizes simultaneously
-        # for all search directions. (21)
-        if updates:
-            A = cp.stack(updates, axis=-1)
-            b = chi_.view('float32').reshape(lstsq_shape)
+        # for all search directions.
+        λ = 0.5
+        if len(updates) == 1:  # (23)
+            dX = updates[0]
+            A = cp.sum(dX * dX.conj(), axis=(-2, -1))
+            A += cp.mean(A) * λ
+            b = cp.sum(cp.real(chi_ * dX.conj()), axis=(-2, -1))
+            steps = (b / A)[..., None]
+        elif len(updates) == 2:  # (22)
+            A = cp.empty((*dOP.shape[:-2], 2, 2), dtype='complex64')
+            A[..., 0, 0] = cp.sum(dOP * dOP.conj(), axis=(-2, -1))
+            A[..., 0, 0] += cp.mean(A[..., 0, 0]) * λ
+            A[..., 0, 1] = cp.sum(dOP * dPO.conj(), axis=(-2, -1))
+            A[..., 1, 0] = A[..., 0, 1].conj()
+            A[..., 1, 1] = cp.sum(dPO * dPO.conj(), axis=(-2, -1))
+            A[..., 1, 1] += cp.mean(A[..., 0, 0]) * λ
+
+            b = cp.empty((*dOP.shape[:-2], 2), dtype='complex64')
+            b[..., 0] = cp.sum(cp.real(chi_ * dOP.conj()), axis=(-2, -1))
+            b[..., 1] = cp.sum(cp.real(chi_ * dPO.conj()), axis=(-2, -1))
             steps = lstsq(A, b)
+
         num_steps = 0
         d = 0
 
