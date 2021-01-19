@@ -18,9 +18,10 @@ Each incoherent probe may have its own set of coherent modes. The full varying
 probe at a given position is reconstructed by adding the common probe to the
 weighted sum of the coherent modes.
 
-```
-unique_probe = common_probe + np.sum(weights * coherent_modes)
-```
+.. code-block:: python
+
+    unique_probe = common_probe + np.sum(weights * coherent_modes)
+
 
 Design comments
 ---------------
