@@ -55,6 +55,7 @@ def lstsq_grad(
     # Compute the diffraction patterns for all of the probe modes at once.
     # We need access to all of the modes of a position to solve the phase
     # problem. The Ptycho operator doesn't do this natively, so it's messy.
+    # TODO: Refactor so no using non-public API (_patch)
     patches = cp.zeros(data_.shape, dtype='complex64')
     patches = op.diffraction._patch(
         patches=patches,
@@ -69,8 +70,8 @@ def lstsq_grad(
     pad, end = op.diffraction.pad, op.diffraction.end
     nearplane[..., pad:end, pad:end] *= unique_probe
 
-    # Solve the farplane phase problem
-    farplane = op.propagation.fwd(nearplane, overwrite=False)
+    # Solve the farplane phase problem ----------------------------------------
+    farplane = op.propagation.fwd(nearplane, overwrite=True)
     intensity = xp.sum(xp.square(xp.abs(farplane)), axis=(2, 3))
     cost = op.propagation.cost(data_, intensity)
     logger.info('%10s cost is %+12.5e', 'farplane', cost)
@@ -82,44 +83,41 @@ def lstsq_grad(
         logger.info('%10s cost is %+12.5e', 'farplane', cost)
         # TODO: Only compute cost every 20 iterations or on a log sampling?
 
-    # Use χ (diff) to solve the nearplane problem. We use least-squares to
-    # find the update of all the search directions: object, probe,
-    # positions, etc that causes the nearplane wavefront to match the one
-    # we just found by solving the phase problem.
     farplane = op.propagation.adj(farplane, overwrite=True)
 
-    # -------------------------------------------------------------------------
-
-    # To solve the least-squares optimal step problem we flatten the last
-    # two dimensions of the nearplanes and convert from complex to float
+    # Solve the nearplane problem ---------------------------------------------
+    # To find optimal step using least-squares we will convert from complex to
+    # float and flatten the last two dimensions of the nearplanes
     lstsq_shape = (*nearplane.shape[:-3], 1, (pad - end) * (pad - end) * 2)
 
     for m in range(probe.shape[-3]):
 
         nearplane = farplane[..., m:m + 1, pad:end, pad:end]
 
-        probe_ = common_probe[..., m:m + 1, :, :]
-        uprobe_ = unique_probe[..., m:m + 1, :, :]
+        cprobe = common_probe[..., m:m + 1, :, :]
+        uprobe = unique_probe[..., m:m + 1, :, :]
 
-        patches = cp.zeros(nearplane.shape, dtype='complex64')
         patches = op.diffraction._patch(
-            patches=patches,
+            patches=cp.zeros(nearplane.shape, dtype='complex64'),
             psi=psi,
             scan=scan_,
             fwd=True,
         )
 
-        diff = nearplane - uprobe_ * patches
+        # χ (diff) is the target for the nearplane problem; the difference
+        # between the desired nearplane and the current nearplane that we wish
+        # to minimize.
+        diff = nearplane - uprobe * patches
 
         logger.info('%10s cost is %+12.5e', 'nearplane', norm(diff))
 
         updates = []
 
         if recover_psi:
-            grad_psi = cp.conj(uprobe_) * diff
+            grad_psi = cp.conj(uprobe) * diff
 
             # Weight object updates by total probe intensity in each view
-            total_illumination = uprobe_ * uprobe_.conj()
+            total_illumination = uprobe * uprobe.conj()
             total_illumination /= norm(
                 total_illumination,
                 axis=(-5, -4, -3, -2, -1),
@@ -127,7 +125,9 @@ def lstsq_grad(
             )
             assert total_illumination.dtype == 'complex64'
 
-            # (25b) Common object gradient
+            # (25b) Common object gradient. Use a weighted (normalized) sum
+            # instead of division as described in publication to improve
+            # numerical stability.
             common_grad_psi = op.diffraction._patch(
                 patches=grad_psi * total_illumination,
                 psi=cp.zeros(psi.shape, dtype='complex64'),
@@ -140,7 +140,8 @@ def lstsq_grad(
                 psi=common_grad_psi,
                 scan=scan_,
                 fwd=True,
-            ) * uprobe_
+            ) * uprobe
+
             updates.append(dOP.view('float32').reshape(lstsq_shape))
 
         if recover_probe:
@@ -154,7 +155,9 @@ def lstsq_grad(
                 keepdims=True,
             )
 
-            # (25a) Common probe gradient
+            # (25a) Common probe gradient. Use a weighted (normalized) sum
+            # instead of division as described in publication to improve
+            # numerical stability.
             common_grad_probe = cp.sum(
                 grad_probe * total_transmission,
                 axis=-5,
@@ -237,7 +240,7 @@ def lstsq_grad(
             num_steps += 1
 
             # (27a) Probe update
-            probe_ += common_grad_probe * cp.sum(
+            cprobe += common_grad_probe * cp.sum(
                 step * total_transmission,
                 axis=-5,
                 keepdims=True,
@@ -251,7 +254,7 @@ def lstsq_grad(
                 fwd=True,
             )
             logger.info('%10s cost is %+12.5e', 'nearplane',
-                        norm(probe_ * patches - nearplane))
+                        norm(cprobe * patches - nearplane))
 
     if recover_probe and probe.shape[-3] > 1:
         probe = orthogonalize_eig(probe)
