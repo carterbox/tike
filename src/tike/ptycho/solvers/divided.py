@@ -256,9 +256,6 @@ def lstsq_grad(
             logger.info('%10s cost is %+12.5e', 'nearplane',
                         norm(cprobe * patches - nearplane))
 
-    if recover_probe and probe.shape[-3] > 1:
-        probe = orthogonalize_eig(probe)
-
     result = {
         'psi': [psi],
         'probe': [probe],
