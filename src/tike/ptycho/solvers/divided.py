@@ -3,6 +3,7 @@ import logging
 import cupy as cp
 
 from tike.linalg import lstsq, projection, norm
+from tike.opt import adam
 
 from ..position import update_positions_pd
 from ..probe import orthogonalize_eig, get_unique, update_coherent_probe
@@ -18,6 +19,10 @@ def lstsq_grad(
     cost=None,
     coherent_probe=None,
     weights=None,
+    momentum_psi=None,
+    momentum_probe=None,
+    velocity_psi=None,
+    velocity_probe=None,
 ):  # yapf: disable
     """Solve the ptychography problem using Odstrcil et al's approach.
 
@@ -46,6 +51,15 @@ def lstsq_grad(
     if coherent_probe is not None:
         weights = weights[0]
         coherent_probe = coherent_probe[0]
+    if momentum_psi is not None:
+        momentum_psi = momentum_psi[0]
+        velocity_psi = velocity_psi[0]
+    if momentum_probe is None:
+        momentum_probe = cp.zeros_like(probe)
+        velocity_probe = cp.zeros_like(probe)
+    else:
+        momentum_probe = momentum_probe[0]
+        velocity_probe = velocity_probe[0]
 
     common_probe = probe
     unique_probe = get_unique(probe,
@@ -135,6 +149,12 @@ def lstsq_grad(
                 fwd=False,
             )
 
+            common_grad_psi, velocity_psi, momentum_psi = adam(
+                common_grad_psi,
+                velocity_psi,
+                momentum_psi,
+            )
+
             dOP = op.diffraction._patch(
                 patches=cp.zeros(patches.shape, dtype='complex64'),
                 psi=common_grad_psi,
@@ -163,6 +183,11 @@ def lstsq_grad(
                 axis=-5,
                 keepdims=True,
             )
+
+            common_grad_probe, velocity_probe[
+                ..., m:m + 1, :, :], momentum_probe[..., m:m + 1, :, :] = adam(
+                    common_grad_probe, velocity_probe[..., m:m + 1, :, :],
+                    momentum_probe[..., m:m + 1, :, :])
 
             dPO = common_grad_probe * patches
             updates.append(dPO.view('float32').reshape(lstsq_shape))
@@ -261,6 +286,10 @@ def lstsq_grad(
         'probe': [probe],
         'cost': cost,
         'scan': scan,
+        'momentum_psi': [momentum_psi],
+        'momentum_probe': [momentum_probe],
+        'velocity_psi': [velocity_psi],
+        'velocity_probe': [velocity_probe],
     }
     if coherent_probe is not None:
         result['coherent_probe'] = [coherent_probe]

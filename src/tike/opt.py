@@ -16,6 +16,83 @@ logger = logging.getLogger(__name__)
 randomizer = np.random.default_rng()
 
 
+def adagrad(d, v=None, eps=1e-6):
+    """Return the adaptive gradient algorithm direction.
+
+    Parameters
+    ----------
+    d : vector
+        The current search direction.
+    v : vector
+        The adagrad gradient weights.
+    eps : float
+        A tiny constant to prevent zero division.
+
+    Returns
+    -------
+    d : vector
+        The new search direction.
+    v : vector
+        The new gradient weights.
+
+    """
+    if v is None:
+        return d, (d * d.conj()).real
+    v += (d * d.conj()).real
+    d /= (np.sqrt(v) + eps)
+    return d, v
+
+
+def adam(d, v=None, m=None, vdecay=0.9, mdecay=0.999, eps=1e-6):
+    """Return the adaptive moment estimation direction.
+
+    Parameters
+    ----------
+    d : vector
+        The current search direction.
+    v : vector
+        The adam gradient weights.
+    m : vector
+        The adam momentum weights.
+    vdecay, mdecay : float [0, 1)
+        A factor which determines how quickly information from previous steps
+        decays.
+    eps : float
+        A tiny constant to prevent zero division.
+
+    Returns
+    -------
+    d : vector
+        The new search direction.
+    v : vector
+        The new gradient weights.
+    m : vector
+        The new momentum weights.
+
+    """
+    v = 0 if v is None else v
+    m = 0 if m is None else m
+
+    m = mdecay * m + (1 - mdecay) * d
+    v = vdecay * v + (1 - vdecay) * (d * d.conj()).real
+
+    m_ = m / (1 - mdecay)
+    v_ = np.sqrt(v / (1 - vdecay))
+
+    return m_ / (v_ + eps), v, m
+
+
+def batch_indicies(n, m=None, use_random=False):
+    """Return list of indices [0...n) as groups of at most m indices.
+
+    >>> batch_indicies(10, 4)
+    [array([2, 4, 7, 3]), array([1, 8, 9]), array([6, 5, 0])]
+    """
+    m = n if m is None else m
+    i = randomizer.permutation(n) if use_random else np.arange(n)
+    return np.array_split(i, (n + m - 1) // m)
+
+
 def line_search(
     f,
     x,
