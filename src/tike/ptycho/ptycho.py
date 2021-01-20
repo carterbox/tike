@@ -282,7 +282,7 @@ def reconstruct(
 
                 logger.info(f"{algorithm} epoch {i:,d}")
 
-                for b in range(num_batch):
+                for b in randomizer.permutation(num_batch):
                     kwargs.update(result)
                     kwargs['scan'] = [s[b] for s in scan]
                     kwargs['weights'] = [w[b] for w in weights]
