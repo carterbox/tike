@@ -43,7 +43,6 @@ def lstsq_grad(
     Optics Express. 2018.
 
     """
-    xp = op.xp
     data_ = data[0]
     probe = probe[0]
     scan_ = scan[0]
@@ -61,48 +60,23 @@ def lstsq_grad(
         momentum_probe = momentum_probe[0]
         velocity_probe = velocity_probe[0]
 
+    # -------------------------------------------------------------------------
+
     common_probe = probe
-    unique_probe = get_varying_probe(probe,
-                                     eigen_probe=eigen_probe,
-                                     weights=eigen_weights)
-
-    # Compute the diffraction patterns for all of the probe modes at once.
-    # We need access to all of the modes of a position to solve the phase
-    # problem. The Ptycho operator doesn't do this natively, so it's messy.
-    # TODO: Refactor so no using non-public API (_patch)
-    patches = cp.zeros(data_.shape, dtype='complex64')
-    patches = op.diffraction._patch(
-        patches=patches,
-        psi=psi,
-        scan=scan_,
-        fwd=True,
+    unique_probe = get_varying_probe(
+        probe,
+        eigen_probe=eigen_probe,
+        weights=eigen_weights,
     )
-    patches = patches.reshape(op.ntheta, scan_.shape[-2], 1, 1,
-                              op.detector_shape, op.detector_shape)
 
-    nearplane = op.xp.tile(patches, reps=(1, 1, 1, probe.shape[-3], 1, 1))
+    farplane, cost = _update_wavefront(op, data_, unique_probe, scan_, psi)
+
     pad, end = op.diffraction.pad, op.diffraction.end
-    nearplane[..., pad:end, pad:end] *= unique_probe
-
-    # Solve the farplane phase problem ----------------------------------------
-    farplane = op.propagation.fwd(nearplane, overwrite=True)
-    intensity = xp.sum(xp.square(xp.abs(farplane)), axis=(2, 3))
-    cost = op.propagation.cost(data_, intensity)
-    logger.info('%10s cost is %+12.5e', 'farplane', cost)
-    farplane -= 0.5 * op.propagation.grad(data_, farplane, intensity)
-
-    if __debug__:
-        intensity = xp.sum(xp.square(xp.abs(farplane)), axis=(2, 3))
-        cost = op.propagation.cost(data_, intensity)
-        logger.info('%10s cost is %+12.5e', 'farplane', cost)
-        # TODO: Only compute cost every 20 iterations or on a log sampling?
-
-    farplane = op.propagation.adj(farplane, overwrite=True)
 
     # Solve the nearplane problem ---------------------------------------------
     # To find optimal step using least-squares we will convert from complex to
     # float and flatten the last two dimensions of the nearplanes
-    lstsq_shape = (*nearplane.shape[:-3], 1, (pad - end) * (pad - end) * 2)
+    lstsq_shape = (*farplane.shape[:-3], 1, (pad - end) * (pad - end) * 2)
 
     for m in range(probe.shape[-3]):
 
@@ -165,7 +139,7 @@ def lstsq_grad(
             updates.append(dOP.view('float32').reshape(lstsq_shape))
 
         if recover_probe:
-            grad_probe = xp.conj(patches) * diff
+            grad_probe = cp.conj(patches) * diff
 
             # Weight probes in areas of higher transmission as more important
             total_transmission = patches * patches.conj()
@@ -199,13 +173,12 @@ def lstsq_grad(
 
             for c in range(eigen_probe.shape[-4]):
 
-                eigen_probe[
-                    ..., c:c + 1, m:m + 1, :, :] = update_eigen_probe(
-                        R,
-                        eigen_probe[..., c:c + 1, m:m + 1, :, :],
-                        eigen_weights[..., c, m],
-                        β=0.01,  # TODO: Adjust according to mini-batch size
-                    )
+                eigen_probe[..., c:c + 1, m:m + 1, :, :] = update_eigen_probe(
+                    R,
+                    eigen_probe[..., c:c + 1, m:m + 1, :, :],
+                    eigen_weights[..., c, m],
+                    β=0.01,  # TODO: Adjust according to mini-batch size
+                )
 
                 # Determine new eigen_weights for the updated coherent probe
                 phi = patches * eigen_probe[..., c:c + 1, m:m + 1, :, :]
@@ -295,3 +268,41 @@ def lstsq_grad(
         result['eigen_probe'] = [eigen_probe]
         result['eigen_weights'] = [eigen_weights]
     return result
+
+
+def _update_wavefront(op, data, varying_probe, scan, psi):
+
+    # Compute the diffraction patterns for all of the probe modes at once.
+    # We need access to all of the modes of a position to solve the phase
+    # problem. The Ptycho operator doesn't do this natively, so it's messy.
+    # TODO: Refactor so no using non-public API (_patch)
+    patches = cp.zeros(data.shape, dtype='complex64')
+    patches = op.diffraction._patch(
+        patches=patches,
+        psi=psi,
+        scan=scan,
+        fwd=True,
+    )
+    patches = patches.reshape(op.ntheta, scan.shape[-2], 1, 1,
+                              op.detector_shape, op.detector_shape)
+
+    nearplane = cp.tile(patches, reps=(1, 1, 1, varying_probe.shape[-3], 1, 1))
+    pad, end = op.diffraction.pad, op.diffraction.end
+    nearplane[..., pad:end, pad:end] *= varying_probe
+
+    # Solve the farplane phase problem ----------------------------------------
+    farplane = op.propagation.fwd(nearplane, overwrite=True)
+    intensity = cp.sum(cp.square(cp.abs(farplane)), axis=(2, 3))
+    cost = op.propagation.cost(data, intensity)
+    logger.info('%10s cost is %+12.5e', 'farplane', cost)
+    farplane -= 0.5 * op.propagation.grad(data, farplane, intensity)
+
+    if __debug__:
+        intensity = cp.sum(cp.square(cp.abs(farplane)), axis=(2, 3))
+        cost = op.propagation.cost(data, intensity)
+        logger.info('%10s cost is %+12.5e', 'farplane', cost)
+        # TODO: Only compute cost every 20 iterations or on a log sampling?
+
+    farplane = op.propagation.adj(farplane, overwrite=True)
+
+    return farplane, cost
