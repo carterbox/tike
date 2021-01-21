@@ -6,7 +6,7 @@ from tike.linalg import lstsq, projection, norm
 from tike.opt import adam
 
 from ..position import update_positions_pd
-from ..probe import orthogonalize_eig, get_unique, update_coherent_probe
+from ..probe import orthogonalize_eig, get_varying_probe, update_eigen_probe
 
 logger = logging.getLogger(__name__)
 
@@ -17,8 +17,8 @@ def lstsq_grad(
     recover_psi=True, recover_probe=False, recover_positions=False,
     cg_iter=4,
     cost=None,
-    coherent_probe=None,
-    weights=None,
+    eigen_probe=None,
+    eigen_weights=None,
     momentum_psi=None,
     momentum_probe=None,
     velocity_psi=None,
@@ -48,9 +48,9 @@ def lstsq_grad(
     probe = probe[0]
     scan_ = scan[0]
     psi = psi[0]
-    if coherent_probe is not None:
-        weights = weights[0]
-        coherent_probe = coherent_probe[0]
+    if eigen_probe is not None:
+        eigen_weights = eigen_weights[0]
+        eigen_probe = eigen_probe[0]
     if momentum_psi is not None:
         momentum_psi = momentum_psi[0]
         velocity_psi = velocity_psi[0]
@@ -62,9 +62,9 @@ def lstsq_grad(
         velocity_probe = velocity_probe[0]
 
     common_probe = probe
-    unique_probe = get_unique(probe,
-                              coherent_probe=coherent_probe,
-                              weights=weights)
+    unique_probe = get_varying_probe(probe,
+                                     eigen_probe=eigen_probe,
+                                     weights=eigen_weights)
 
     # Compute the diffraction patterns for all of the probe modes at once.
     # We need access to all of the modes of a position to solve the phase
@@ -192,23 +192,23 @@ def lstsq_grad(
             dPO = common_grad_probe * patches
             updates.append(dPO.view('float32').reshape(lstsq_shape))
 
-        if recover_probe and coherent_probe is not None:
+        if recover_probe and eigen_probe is not None:
             logger.info('Updating coherent probes')
             # (30) residual probe updates
             R = grad_probe - cp.mean(grad_probe, axis=-5, keepdims=True)
 
-            for c in range(coherent_probe.shape[-4]):
+            for c in range(eigen_probe.shape[-4]):
 
-                coherent_probe[
-                    ..., c:c + 1, m:m + 1, :, :] = update_coherent_probe(
+                eigen_probe[
+                    ..., c:c + 1, m:m + 1, :, :] = update_eigen_probe(
                         R,
-                        coherent_probe[..., c:c + 1, m:m + 1, :, :],
-                        weights[..., c, m],
+                        eigen_probe[..., c:c + 1, m:m + 1, :, :],
+                        eigen_weights[..., c, m],
                         β=0.01,  # TODO: Adjust according to mini-batch size
                     )
 
-                # Determine new weights for the updated coherent probe
-                phi = patches * coherent_probe[..., c:c + 1, m:m + 1, :, :]
+                # Determine new eigen_weights for the updated coherent probe
+                phi = patches * eigen_probe[..., c:c + 1, m:m + 1, :, :]
                 n = cp.mean(
                     cp.real(diff * phi.conj()),
                     axis=(-1, -2),
@@ -217,22 +217,22 @@ def lstsq_grad(
                 norm_phi = cp.square(cp.abs(phi))
                 d = cp.mean(norm_phi, axis=(-1, -2), keepdims=True)
                 d += 0.1 * cp.mean(d, axis=-5, keepdims=True)
-                weight_update = (n / d).reshape(*weights[..., 0, 0].shape)
+                weight_update = (n / d).reshape(*eigen_weights[..., 0, 0].shape)
                 assert cp.all(cp.isfinite(weight_update))
 
                 # (33) The sum of all previous steps constrained to zero-mean
-                weights[..., c, m] += weight_update
-                weights[..., c, m] -= cp.mean(
-                    weights[..., c, m],
+                eigen_weights[..., c, m] += weight_update
+                eigen_weights[..., c, m] -= cp.mean(
+                    eigen_weights[..., c, m],
                     axis=-1,
                     keepdims=True,
                 )
 
-                if coherent_probe.shape[-4] <= c + 1:
+                if eigen_probe.shape[-4] <= c + 1:
                     # Subtract projection of R onto new probe from R
                     R -= projection(
                         R,
-                        coherent_probe[..., c:c + 1, m:m + 1, :, :],
+                        eigen_probe[..., c:c + 1, m:m + 1, :, :],
                         axis=(-2, -1),
                     )
 
@@ -291,7 +291,7 @@ def lstsq_grad(
         'velocity_psi': [velocity_psi],
         'velocity_probe': [velocity_probe],
     }
-    if coherent_probe is not None:
-        result['coherent_probe'] = [coherent_probe]
-        result['weights'] = [weights]
+    if eigen_probe is not None:
+        result['eigen_probe'] = [eigen_probe]
+        result['eigen_weights'] = [eigen_weights]
     return result

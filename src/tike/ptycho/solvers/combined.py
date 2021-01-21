@@ -14,8 +14,8 @@ def cgrad(
     recover_psi=True, recover_probe=True, recover_positions=False,
     cg_iter=4,
     cost=None,
-    coherent_probe=None,
-    weights=None,
+    eigen_probe=None,
+    eigen_weights=None,
 ):  # yapf: disable
     """Solve the ptychography problem using conjugate gradient.
 
