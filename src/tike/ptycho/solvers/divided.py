@@ -74,9 +74,6 @@ def lstsq_grad(
     pad, end = op.diffraction.pad, op.diffraction.end
 
     # Solve the nearplane problem ---------------------------------------------
-    # To find optimal step using least-squares we will convert from complex to
-    # float and flatten the last two dimensions of the nearplanes
-    lstsq_shape = (*farplane.shape[:-3], 1, (pad - end) * (pad - end) * 2)
 
     for m in range(probe.shape[-3]):
 
@@ -99,35 +96,42 @@ def lstsq_grad(
 
         logger.info('%10s cost is %+12.5e', 'nearplane', norm(diff))
 
-        updates = []
-
         if recover_psi:
             grad_psi = cp.conj(uprobe) * diff
-
-            # Weight object updates by total probe intensity in each view
-            total_illumination = uprobe * uprobe.conj()
-            total_illumination /= norm(
-                total_illumination,
-                axis=(-5, -4, -3, -2, -1),
-                keepdims=True,
-            )
-            assert total_illumination.dtype == 'complex64'
 
             # (25b) Common object gradient. Use a weighted (normalized) sum
             # instead of division as described in publication to improve
             # numerical stability.
             common_grad_psi = op.diffraction._patch(
-                patches=grad_psi * total_illumination,
+                patches=grad_psi,
                 psi=cp.zeros(psi.shape, dtype='complex64'),
                 scan=scan_,
                 fwd=False,
             )
 
-            common_grad_psi, velocity_psi, momentum_psi = adam(
-                common_grad_psi,
-                velocity_psi,
-                momentum_psi,
-            )
+            # Weight object updates by total probe intensity in each view
+            # total_illumination = uprobe * uprobe.conj() * cp.ones(
+            #     (*nearplane.shape[:-2], *uprobe.shape[-2:]), dtype='complex64')
+            # temp = cp.broadcast_to(
+            #     cp.max(
+            #         total_illumination,
+            #         axis=(-5, -4, -3, -2, -1),
+            #     )[..., None, None],
+            #     psi.shape,
+            # )
+            # common_grad_psi /= cp.sqrt(
+            #     op.diffraction._patch(
+            #         patches=total_illumination,
+            #         psi=temp,
+            #         scan=scan_,
+            #         fwd=False,
+            #     ))
+
+            # common_grad_psi, velocity_psi, momentum_psi = adam(
+            #     common_grad_psi,
+            #     velocity_psi,
+            #     momentum_psi,
+            # )
 
             dOP = op.diffraction._patch(
                 patches=cp.zeros(patches.shape, dtype='complex64'),
@@ -135,36 +139,29 @@ def lstsq_grad(
                 scan=scan_,
                 fwd=True,
             ) * uprobe
-
-            updates.append(dOP.view('float32').reshape(lstsq_shape))
+        else:
+            dOP = 0
 
         if recover_probe:
             grad_probe = cp.conj(patches) * diff
 
-            # Weight probes in areas of higher transmission as more important
-            total_transmission = patches * patches.conj()
-            total_transmission /= norm(
-                total_transmission,
-                axis=(-5, -4, -3, -2, -1),
-                keepdims=True,
-            )
-
-            # (25a) Common probe gradient. Use a weighted (normalized) sum
-            # instead of division as described in publication to improve
-            # numerical stability.
-            common_grad_probe = cp.sum(
-                grad_probe * total_transmission,
+            # (25a) Common probe gradient. Use simple average instead of
+            # division as described in publication because that's what
+            # ptychoshelves does
+            common_grad_probe = cp.mean(
+                grad_probe,
                 axis=-5,
                 keepdims=True,
             )
 
-            common_grad_probe, velocity_probe[
-                ..., m:m + 1, :, :], momentum_probe[..., m:m + 1, :, :] = adam(
-                    common_grad_probe, velocity_probe[..., m:m + 1, :, :],
-                    momentum_probe[..., m:m + 1, :, :])
+            # common_grad_probe, velocity_probe[
+            #     ..., m:m + 1, :, :], momentum_probe[..., m:m + 1, :, :] = adam(
+            #         common_grad_probe, velocity_probe[..., m:m + 1, :, :],
+            #         momentum_probe[..., m:m + 1, :, :])
 
             dPO = common_grad_probe * patches
-            updates.append(dPO.view('float32').reshape(lstsq_shape))
+        else:
+            dPO = 0
 
         if recover_probe and eigen_probe is not None:
             logger.info('Updating coherent probes')
@@ -209,37 +206,35 @@ def lstsq_grad(
                         axis=(-2, -1),
                     )
 
-        # Use least-squares to find the optimal step sizes simultaneously
-        # for all search directions.
-        steps = lstsq(
-            a=cp.stack(updates, axis=-1),
-            b=diff.view('float32').reshape(lstsq_shape),
-        )
+        # (22) Use least-squares to find the optimal step sizes simultaneously
+        A1 = cp.sum((dOP * dOP.conj()).real + 0.5, axis=(-2, -1))
+        A2 = cp.sum((dOP * dPO.conj()), axis=(-2, -1))
+        A3 = A2.conj()
+        A4 = cp.sum((dPO * dPO.conj()).real + 0.5, axis=(-2, -1))
+        b1 = cp.sum((dOP.conj() * diff).real, axis=(-2, -1))
+        b2 = cp.sum((dPO.conj() * diff).real, axis=(-2, -1))
+        A1 += 0.5 * cp.mean(A1, axis=-3, keepdims=True)
+        A4 += 0.5 * cp.mean(A4, axis=-3, keepdims=True)
 
-        num_steps = 0
+        determinant = A1 * A4 - A2 * A3
 
         # Update each direction
         if recover_psi:
-            step = steps[..., num_steps, None, None]
-            num_steps += 1
+            x1 = -cp.conj(A2 * b2 - A4 * b1) / determinant
+            step = x1[..., None, None]
 
             # (27b) Object update
-            weighted_step = op.diffraction._patch(
-                patches=step * total_illumination,
-                psi=cp.zeros(psi.shape, dtype='complex64'),
-                scan=scan_,
-                fwd=False,
-            )
+            weighted_step = cp.min(step, keepdims=True, axis=-5)[..., 0, 0, 0]
 
             psi += weighted_step * common_grad_psi
 
         if recover_probe:
-            step = steps[..., num_steps, None, None]
-            num_steps += 1
+            x2 = cp.conj(A1 * b2 - A3 * b1) / determinant
+            step = x2[..., None, None]
 
             # (27a) Probe update
-            cprobe += common_grad_probe * cp.sum(
-                step * total_transmission,
+            cprobe += common_grad_probe * cp.mean(
+                step,
                 axis=-5,
                 keepdims=True,
             )
@@ -259,14 +254,15 @@ def lstsq_grad(
         'probe': [probe],
         'cost': cost,
         'scan': scan,
-        'momentum_psi': [momentum_psi],
-        'momentum_probe': [momentum_probe],
-        'velocity_psi': [velocity_psi],
-        'velocity_probe': [velocity_probe],
     }
     if eigen_probe is not None:
         result['eigen_probe'] = [eigen_probe]
         result['eigen_weights'] = [eigen_weights]
+    if momentum_psi is not None:
+        result['momentum_psi'] = [momentum_psi]
+        result['momentum_probe'] = [momentum_probe]
+        result['velocity_psi'] = [velocity_psi]
+        result['velocity_probe'] = [velocity_probe]
     return result
 
 
