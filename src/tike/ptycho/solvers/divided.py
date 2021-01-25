@@ -19,10 +19,6 @@ def lstsq_grad(
     cost=None,
     eigen_probe=None,
     eigen_weights=None,
-    momentum_psi=None,
-    momentum_probe=None,
-    velocity_psi=None,
-    velocity_probe=None,
 ):  # yapf: disable
     """Solve the ptychography problem using Odstrcil et al's approach.
 
@@ -50,15 +46,6 @@ def lstsq_grad(
     if eigen_probe is not None:
         eigen_weights = eigen_weights[0]
         eigen_probe = eigen_probe[0]
-    if momentum_psi is not None:
-        momentum_psi = momentum_psi[0]
-        velocity_psi = velocity_psi[0]
-    if momentum_probe is None:
-        momentum_probe = cp.zeros_like(probe)
-        velocity_probe = cp.zeros_like(probe)
-    else:
-        momentum_probe = momentum_probe[0]
-        velocity_probe = velocity_probe[0]
 
     # -------------------------------------------------------------------------
 
@@ -109,30 +96,6 @@ def lstsq_grad(
                 fwd=False,
             )
 
-            # Weight object updates by total probe intensity in each view
-            # total_illumination = uprobe * uprobe.conj() * cp.ones(
-            #     (*nearplane.shape[:-2], *uprobe.shape[-2:]), dtype='complex64')
-            # temp = cp.broadcast_to(
-            #     cp.max(
-            #         total_illumination,
-            #         axis=(-5, -4, -3, -2, -1),
-            #     )[..., None, None],
-            #     psi.shape,
-            # )
-            # common_grad_psi /= cp.sqrt(
-            #     op.diffraction._patch(
-            #         patches=total_illumination,
-            #         psi=temp,
-            #         scan=scan_,
-            #         fwd=False,
-            #     ))
-
-            # common_grad_psi, velocity_psi, momentum_psi = adam(
-            #     common_grad_psi,
-            #     velocity_psi,
-            #     momentum_psi,
-            # )
-
             dOP = op.diffraction._patch(
                 patches=cp.zeros(patches.shape, dtype='complex64'),
                 psi=common_grad_psi,
@@ -153,11 +116,6 @@ def lstsq_grad(
                 axis=-5,
                 keepdims=True,
             )
-
-            # common_grad_probe, velocity_probe[
-            #     ..., m:m + 1, :, :], momentum_probe[..., m:m + 1, :, :] = adam(
-            #         common_grad_probe, velocity_probe[..., m:m + 1, :, :],
-            #         momentum_probe[..., m:m + 1, :, :])
 
             dPO = common_grad_probe * patches
         else:
@@ -258,11 +216,6 @@ def lstsq_grad(
     if eigen_probe is not None:
         result['eigen_probe'] = [eigen_probe]
         result['eigen_weights'] = [eigen_weights]
-    if momentum_psi is not None:
-        result['momentum_psi'] = [momentum_psi]
-        result['momentum_probe'] = [momentum_probe]
-        result['velocity_psi'] = [velocity_psi]
-        result['velocity_probe'] = [velocity_probe]
     return result
 
 
