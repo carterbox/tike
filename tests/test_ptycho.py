@@ -53,6 +53,7 @@ import unittest
 
 import numpy as np
 
+from tike.communicators import MPIComm
 import tike.ptycho
 import tike.random
 
@@ -223,6 +224,11 @@ class TestPtychoRecon(unittest.TestCase):
 
     def template_consistent_algorithm(self, algorithm, params={}):
         """Check ptycho.solver.algorithm for consistency."""
+
+        if params.get('use_mpi') is True:
+            with MPIComm() as IO:
+                self.scan, self.data = IO.MPIio(self.scan, self.data)
+
         result = {
             'psi': np.ones_like(self.original),
             'probe': self.probe * np.random.rand(*self.probe.shape),
@@ -279,6 +285,7 @@ class TestPtychoRecon(unittest.TestCase):
                 'num_gpu': 4,
                 'recover_probe': True,
                 'recover_psi': True,
+                'use_mpi': True,
             },
         )
 
@@ -296,6 +303,7 @@ class TestPtychoRecon(unittest.TestCase):
                 'num_gpu': 1,
                 'recover_probe': True,
                 'recover_psi': True,
+                'use_mpi': False,
             },
         )
 
