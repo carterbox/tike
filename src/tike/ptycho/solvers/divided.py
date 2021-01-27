@@ -3,6 +3,7 @@ import logging
 import cupy as cp
 
 from tike.linalg import lstsq, projection, norm
+from tike.opt import batch_indicies
 
 from ..position import update_positions_pd
 from ..probe import orthogonalize_eig, get_varying_probe, update_eigen_probe
@@ -18,6 +19,8 @@ def lstsq_grad(
     cost=None,
     eigen_probe=None,
     eigen_weights=None,
+    batch_size=None,
+    subset_is_random=True,
 ):  # yapf: disable
     """Solve the ptychography problem using Odstrcil et al's approach.
 
@@ -38,34 +41,54 @@ def lstsq_grad(
     Optics Express. 2018.
 
     """
-    data_ = data[0]
-    probe = probe[0]
-    scan_ = scan[0]
-    psi = psi[0]
+    for b in batch_indicies(scan[0].shape[-2], batch_size, subset_is_random):
+
+        bdata = data[0][:, b]
+        bprobe = probe[0]
+        bscan = scan[0][:, b]
+        bpsi = psi[0]
+        if eigen_probe is not None:
+            beigen_weights = eigen_weights[0][:, b]
+            beigen_probe = eigen_probe[0]
+        else:
+            beigen_probe = None
+            beigen_weights = None
+
+        unique_probe = get_varying_probe(
+            bprobe,
+            eigen_probe=beigen_probe,
+            weights=beigen_weights,
+        )
+
+        farplane, cost = _update_wavefront(op, bdata, unique_probe, bscan, bpsi)
+
+        bpsi, bprobe, beigen_probe, beigen_weights = _update_nearplane(
+            op, farplane, bpsi, bscan, bprobe, unique_probe, beigen_probe,
+            beigen_weights, recover_psi, recover_probe)
+
+    result = {
+        'psi': psi,
+        'probe': probe,
+        'cost': cost,
+        'scan': scan,
+    }
     if eigen_probe is not None:
-        eigen_weights = eigen_weights[0]
-        eigen_probe = eigen_probe[0]
+        result['eigen_probe'] = eigen_probe
+        result['eigen_weights'] = eigen_weights
 
-    # -------------------------------------------------------------------------
+    return result
 
-    common_probe = probe
-    unique_probe = get_varying_probe(
-        probe,
-        eigen_probe=eigen_probe,
-        weights=eigen_weights,
-    )
 
-    farplane, cost = _update_wavefront(op, data_, unique_probe, scan_, psi)
+def _update_nearplane(op, farplane, psi, scan_, probe, unique_probe,
+                      eigen_probe, eigen_weights, recover_psi, recover_probe):
 
     pad, end = op.diffraction.pad, op.diffraction.end
-
-    # Solve the nearplane problem ---------------------------------------------
 
     for m in range(probe.shape[-3]):
 
         nearplane = farplane[..., m:m + 1, pad:end, pad:end]
 
-        cprobe = common_probe[..., m:m + 1, :, :]
+        cprobe = probe[..., m:m + 1, :, :]
         uprobe = unique_probe[..., m:m + 1, :, :]
 
         patches = op.diffraction._patch(
@@ -206,16 +229,7 @@ def lstsq_grad(
             logger.info('%10s cost is %+12.5e', 'nearplane',
                         norm(cprobe * patches - nearplane))
 
-    result = {
-        'psi': [psi],
-        'probe': [probe],
-        'cost': cost,
-        'scan': scan,
-    }
-    if eigen_probe is not None:
-        result['eigen_probe'] = [eigen_probe]
-        result['eigen_weights'] = [eigen_weights]
-    return result
+        return psi, probe, eigen_probe, eigen_weights
 
 
 def _update_wavefront(op, data, varying_probe, scan, psi):
