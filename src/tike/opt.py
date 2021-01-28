@@ -82,15 +82,15 @@ def adam(d, v=None, m=None, vdecay=0.9, mdecay=0.999, eps=1e-6):
     return m_ / (v_ + eps), v, m
 
 
-def batch_indicies(n, m=None, use_random=False):
-    """Return list of indices [0...n) as groups of at most m indices.
+def batch_indicies(n, m=1, use_random=False):
+    """Return list of indices [0...n) as m groups.
 
-    >>> batch_indicies(10, 4)
+    >>> batch_indicies(10, 3)
     [array([2, 4, 7, 3]), array([1, 8, 9]), array([6, 5, 0])]
     """
-    m = n if m is None else m
+    assert 0 < m and m <= n, (m, n)
     i = randomizer.permutation(n) if use_random else np.arange(n)
-    return np.array_split(i, (n + m - 1) // m)
+    return np.array_split(i, m)
 
 
 def line_search(

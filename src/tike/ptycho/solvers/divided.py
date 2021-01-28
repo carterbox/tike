@@ -19,7 +19,7 @@ def lstsq_grad(
     cost=None,
     eigen_probe=None,
     eigen_weights=None,
-    batch_size=None,
+    num_batch=1,
     subset_is_random=True,
 ):  # yapf: disable
     """Solve the ptychography problem using Odstrcil et al's approach.
@@ -41,7 +41,7 @@ def lstsq_grad(
     Optics Express. 2018.
 
     """
-    for b in batch_indicies(scan[0].shape[-2], batch_size, subset_is_random):
+    for b in batch_indicies(scan[0].shape[-2], num_batch, subset_is_random):
 
         bdata = data[0][:, b]
         bprobe = probe[0]
