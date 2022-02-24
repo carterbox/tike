@@ -4,10 +4,10 @@ import cupy as cp
 
 import tike.linalg
 from tike.opt import get_batch, put_batch, randomizer, adam
+import tike.ptycho.probe
 
 from ..object import positivity_constraint, smoothness_constraint
 from ..position import PositionOptions, _image_grad
-from ..probe import orthogonalize_eig
 
 logger = logging.getLogger(__name__)
 
@@ -25,6 +25,8 @@ def rpie(
     probe_options=None,
     position_options=None,
     object_options=None,
+    eigen_weights=None,
+    eigen_probe=None,
 ):
     """Solve the ptychography problem using regularized ptychographical engine.
 
@@ -115,7 +117,7 @@ def rpie(
         (
             psi,
             probe,
-            beigen_probe,
+            eigen_probe,
             beigen_weights,
             bscan,
             bposition_options,
@@ -127,7 +129,7 @@ def rpie(
             bscan,
             probe,
             unique_probe,
-            beigen_probe,
+            eigen_probe,
             beigen_weights,
             object_options is not None,
             probe_options is not None,
@@ -152,7 +154,7 @@ def rpie(
         )
 
     if probe_options and probe_options.orthogonality_constraint:
-        probe = comm.pool.map(orthogonalize_eig, probe)
+        probe = comm.pool.map(tike.ptycho.probe.orthogonalize_eig, probe)
 
     if object_options:
         psi = comm.pool.map(positivity_constraint,
