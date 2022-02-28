@@ -394,14 +394,13 @@ class TestPtychoRecon(TemplatePtychoRecon, unittest.TestCase):
     def test_consistent_rpie_variable_probe(self):
         """Check ptycho.solver.lstsq_grad for consistency."""
 
-        # probes_with_modes = min(10, self.probe.shape[-3])
-        # _, weights = tike.ptycho.probe.init_varying_probe(
-        #     self.scan,
-        #     self.probe,
-        #     num_eigen_probes=0,
-        #     probes_with_modes=1,
-        # )
-
+        probes_with_modes = min(10, self.probe.shape[-3])
+        _, weights = tike.ptycho.probe.init_varying_probe(
+            self.scan,
+            self.probe,
+            num_eigen_probes=1,
+            probes_with_modes=probes_with_modes,
+        )
         _save_ptycho_result(
             self.template_consistent_algorithm(params={
                 'algorithm_options':
@@ -417,6 +416,8 @@ class TestPtychoRecon(TemplatePtychoRecon, unittest.TestCase):
                     ObjectOptions(),
                 'use_mpi':
                     _mpi_size > 1,
+                'eigen_weights':
+                    weights,
             },), f"{'mpi-' if _mpi_size > 1 else ''}rpie-variable-probe")
 
     def test_invalid_algorithm_name(self):
