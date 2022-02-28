@@ -93,6 +93,7 @@ class TestProbe(unittest.TestCase):
 
     def test_init_no_varying_probe(self):
         self.template_init_varing_probe(31, 0, 2, 16, 0)
+        self.template_init_varing_probe(31, 0, 2, 16, 1)
 
     def test_init_1_varying_probe(self):
         self.template_init_varing_probe(31, 1, 2, 16, 1)
