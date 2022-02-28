@@ -95,9 +95,24 @@ def rpie(
                 [b[n] for b in batches],
             )
 
-        unique_probe = probe
-        beigen_probe = None
-        beigen_weights = None
+        if eigen_weights is None:
+            unique_probe = probe
+            beigen_weights = None
+        else:
+            beigen_weights = comm.pool.map(
+                get_batch,
+                eigen_weights,
+                batches,
+                n=n,
+            )
+            if eigen_probe is None:
+                eigen_probe = [None] * comm.pool.num_workers
+            unique_probe = comm.pool.map(
+                tike.ptycho.probe.get_varying_probe,
+                probe,
+                eigen_probe,
+                beigen_weights,
+            )
 
         nearplane, cost = zip(*comm.pool.map(
             _update_wavefront,
@@ -153,6 +168,15 @@ def rpie(
             n=n,
         )
 
+        if beigen_weights is not None:
+            comm.pool.map(
+                put_batch,
+                beigen_weights,
+                eigen_weights,
+                batches,
+                n=n,
+            )
+
     if probe_options and probe_options.orthogonality_constraint:
         probe = comm.pool.map(tike.ptycho.probe.orthogonalize_eig, probe)
 
@@ -174,6 +198,8 @@ def rpie(
         'probe_options': probe_options,
         'object_options': object_options,
         'position_options': position_options,
+        'eigen_probe': eigen_probe,
+        'eigen_weights': eigen_weights,
     }
 
 
@@ -228,7 +254,7 @@ def _update_nearplane(
         patches,
         psi,
         scan_,
-        probe,
+        unique_probe,
         recover_psi=recover_psi,
         recover_probe=recover_probe,
         recover_positions=position_options is not None,
@@ -278,6 +304,15 @@ def _update_nearplane(
 
         probe = comm.pool.bcast([probe[0]])
 
+        if eigen_weights is not None:
+            (probe, eigen_weights) = (list(a) for a in zip(*comm.pool.map(
+                _update_weights,
+                eigen_weights,
+                probe,
+                patches,
+                nearplane_,
+            )))
+
     if position_options:
         (
             scan_,
@@ -293,6 +328,19 @@ def _update_nearplane(
         )))
 
     return psi, probe, eigen_probe, eigen_weights, scan_, position_options
+
+
+def _update_weights(eigen_weights, probe, patches, nearplane):
+    OP = patches * probe
+    xi = nearplane - OP
+    num = cp.sum(cp.real(cp.conj(OP) * xi), axis=(-1, -2))
+    den = cp.sum(cp.abs(OP)**2, axis=(-1, -2))
+
+    eigen_weights -= 0.05 * num / den
+
+    print(eigen_weights.shape)
+
+    return probe, eigen_weights
 
 
 def _get_patches(nearplane, psi, scan, op=None):
@@ -320,7 +368,8 @@ def _get_nearplane_gradients(
 ):
     psi_update_numerator = cp.zeros(psi.shape, dtype='complex64')
     psi_update_denominator = cp.zeros(psi.shape, dtype='complex64')
-    probe_update_numerator = cp.zeros(probe.shape, dtype='complex64')
+    probe_update_numerator = cp.zeros(probe[0:1, :, :, :, :].shape,
+                                      dtype='complex64')
     position_update_numerator = cp.zeros(scan.shape, dtype='float32')
     position_update_denominator = cp.zeros(scan.shape, dtype='float32')
 
@@ -337,10 +386,10 @@ def _get_nearplane_gradients(
                 images=psi_update_numerator,
                 positions=scan,
             )
-            probe_amp = probe[..., 0, 0, [m], :, :] * probe[..., 0, 0,
-                                                            [m], :, :].conj()
+            probe_amp = probe[..., 0, m, :, :] * probe[..., 0, m, :, :].conj()
             # TODO: Allow this kind of broadcasting inside the patch operator
-            probe_amp = cp.tile(probe_amp, (scan.shape[-2], 1, 1))
+            if probe_amp.shape[-3] == 1:
+                probe_amp = cp.tile(probe_amp, (scan.shape[-2], 1, 1))
             psi_update_denominator = op.diffraction.patch.adj(
                 patches=probe_amp,
                 images=psi_update_denominator,
@@ -406,8 +455,7 @@ def _update_position(
 ):
     step = position_update_numerator / (
         (1 - alpha) * position_update_denominator +
-        alpha * position_update_denominator.max()
-    )
+        alpha * position_update_denominator.max())
 
     step_x = step[..., 0]
     step_y = step[..., 1]
