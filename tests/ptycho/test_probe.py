@@ -74,6 +74,38 @@ class TestProbe(unittest.TestCase):
     def test_get_varying_probe_multi_probe_varying_eigen(self):
         self.template_get_varying_probe(31, 3, 7, 16, vary=True)
 
+    def template_init_varing_probe(self, p=31, e=0, s=2, w=16, v=1):
+
+        eigen_probe, weights = tike.ptycho.probe.init_varying_probe(
+            scan=np.random.rand(p, 2),
+            shared_probe=np.random.rand(1, 1, s, w, w),
+            num_eigen_probes=e,
+            probes_with_modes=v,
+        )
+        if e < 2:
+            assert eigen_probe is None
+        else:
+            assert eigen_probe.shape == (1, e - 1, v, w, w)
+        if e < 1:
+            assert weights is None
+        else:
+            assert weights.shape == (p, e, s)
+
+    def test_init_no_varying_probe(self):
+        self.template_init_varing_probe(31, 0, 2, 16, 0)
+
+    def test_init_1_varying_probe(self):
+        self.template_init_varing_probe(31, 1, 2, 16, 1)
+
+    def test_init_many_varying_probe(self):
+        self.template_init_varing_probe(31, 1, 3, 16, 3)
+
+    def test_init_many_varying_probe_with_multiple_basis(self):
+        self.template_init_varing_probe(31, 7, 3, 16, 3)
+
+    def test_init_1_varying_probe_with_multiple_basis(self):
+        self.template_init_varing_probe(31, 7, 3, 16, 1)
+
 
 if __name__ == '__main__':
     unittest.main()
