@@ -453,6 +453,15 @@ def _iterate(
                 f=probe_options.sparsity_constraint,
             )
 
+    if len(algorithm_options.costs) % 10 == 0:
+        result['psi'], result['probe'] = _rescale_obj_probe(
+            operator,
+            comm,
+            result['psi'],
+            result['scan'],
+            result['probe'],
+        )
+
     result = getattr(solvers, algorithm_options.name)(
         operator,
         comm,
@@ -514,6 +523,65 @@ def _teardown(
         psi=result['psi'][0].get(),
         scan=comm.pool.gather_host(scan, axis=-2)[reorder],
     )
+
+
+def _update_total_illumination(probe, scan, op=None, psi_shape=None):
+    """Return the illumination of the primary probe."""
+    primary = probe * probe.conj()
+    primary = cp.sum(primary, axis=-3, keepdims=True)
+    primary = primary[0, 0, 0, :, :]
+    primary = cp.copy(
+        cp.broadcast_to(primary, (*scan.shape[:-1], *probe.shape[-2:])))
+    total_illumination = op.diffraction.patch.adj(
+        patches=primary,
+        images=cp.zeros(psi_shape, dtype='complex64'),
+        positions=scan,
+    ).real
+    return total_illumination
+
+
+def __rescale_obj_probe(psi, probe, total_illumination):
+    """Keep the object amplitude around 1 by scaling probe by a constant.
+
+    Rescale the object by the weighted L2 norm of the object. i.e. square root
+    of the weighted mean of the squares of the object transmission amplitude.
+    Weight using the total illumination of the probe.
+    """
+    W = total_illumination / tike.linalg.mnorm(total_illumination)
+    rescale = cp.sqrt(cp.mean(W * (psi * psi.conj()).real))
+
+    logger.info("object and probe rescaled by %f", rescale)
+
+    probe *= rescale
+    psi /= rescale
+
+    return psi, probe
+
+
+def _rescale_obj_probe(op, comm, psi, scan, probe):
+    """Keep the object amplitude around 1 by scaling probe by a constant."""
+
+    total_illumination = comm.pool.map(
+        _update_total_illumination,
+        probe,
+        scan,
+        op=op,
+        psi_shape=psi[0].shape,
+    )
+    if comm.use_mpi:
+        total_illumination = comm.Allreduce_reduce(total_illumination, 'gpu')
+    else:
+        total_illumination = comm.reduce(total_illumination, 'gpu')
+
+    psi, probe = (list(a) for a in zip(*comm.pool.map(
+        __rescale_obj_probe,
+        psi,
+        probe,
+        total_illumination,
+    )))
+
+    return psi, probe
+
 
 
 def _get_rescale(data, psi, scan, probe, num_batch, operator):
