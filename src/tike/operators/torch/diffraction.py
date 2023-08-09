@@ -15,7 +15,8 @@ class OpticallyThinDiffraction(torch.nn.Module):
         self.patch = Patch()
         self.shift = Shift()
 
-    def forward(self,
+    def forward(
+        self,
         psi: torch.Tensor,
         scan: torch.Tensor,
         kernels: torch.Tensor,
@@ -44,15 +45,19 @@ class OpticallyThinDiffraction(torch.nn.Module):
         assert kernels.ndim == 4, kernels.shape
         assert kernels.shape[-4] == 1 or kernels.shape[-4] == scan.shape[-2]
 
-        noninteger = torch.remainder(scan, 1)
-        integer = scan - noninteger
+        integer = scan.int()
+        noninteger = integer - scan
         patches = self.patch(
             images=psi,
             positions=integer,
-            width=kernels.shape[-2:],
+            widths=kernels.shape[-2:],
         )
-        shifted = self.shift(
+        patches1 = self.shift(
             array=patches,
             shift=noninteger,
         )
-        return kernels * shifted
+        # kernels1 = self.shift(
+        #     array=kernels,
+        #     shift=-noninteger[:, None, ...],
+        # )
+        return kernels * patches1[:, None, ...]

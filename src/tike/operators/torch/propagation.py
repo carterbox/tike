@@ -23,5 +23,5 @@ class Propagation(torch.nn.Module):
         return torch.fft.fft2(
             nearplane,
             norm='ortho',
-            dims=(-2, -1),
+            dim=(-2, -1),
         )

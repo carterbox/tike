@@ -27,7 +27,7 @@ class Ptycho(torch.nn.Module):
         propagation: torch.nn.Module = Propagation,
         diffraction: torch.nn.Module = OpticallyThinDiffraction,
     ):
-        super.__init__()
+        super().__init__()
         self.propagation = propagation()
         self.diffraction = diffraction()
 
@@ -36,16 +36,18 @@ class Ptycho(torch.nn.Module):
         psi: torch.Tensor,
         scan: torch.Tensor,
         probe: torch.Tensor,
-        weights: torch.Tensor,
+        eigen: torch.Tensor = None,
     ) -> torch.Tensor:
         """
 
         Parameters
         ----------
-        probes :  (   1,    1, SHARED, WIDE, HIGH)
+        probes :  (   1, EIGEN, SHARED, WIDE, HIGH)
             The complex illumination function.
-        weights : (POSI,    1, SHARED,    1,    1)
+        weights : (POSI,     1, SHARED,    1,    1)
             Varies the contribution of each shared probe with scan position
+        eigen :   (POSI, EIGEN,      1,    1,    1)
+            Varies the contribution of each eigen probe with scan position
         psi : (WIDE, HIGH) complex64
             The wavefront modulation coefficients of the object.
         scan : (POSI, 2) float32
@@ -53,20 +55,23 @@ class Ptycho(torch.nn.Module):
             measurement in the coordinate system of psi. Coordinate order
             consistent with WIDE, HIGH order.
 
-
         Returns
         -------
-        farplane: (..., POSI, 1, SHARED, detector_shape, detector_shape) complex64
-            The wavefronts hitting the detector respectively.
+        intensity: (POSI, WIDE, HIGH) complex64
+            The measured intensity hitting the detector respectively.
 
         """
-        if weights:
-            # restrict weights to [-1, 1] range
-            weighted_probes = probe * torch.tanh(weights)
-        else:
-            weighted_probes = probe
-        return self.propagation(self.diffraction(
-            psi,
-            scan,
-            weighted_probes,
-        ))
+        weighted_probes = torch.sum(
+            probe, # * torch.tanh(eigen),
+            dim=1,
+        )
+        farplane = self.propagation(self.diffraction(
+                psi,
+                scan,
+                weighted_probes,
+            ))
+        return torch.sum(
+            (farplane * torch.conj(farplane)).real,
+            dim=1,
+        )
+
