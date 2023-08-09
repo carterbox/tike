@@ -59,6 +59,10 @@ from tike.ptycho.probe import ProbeOptions
 import tike.ptycho
 import tike.random
 
+import torch
+import tike.operators
+import tike.operators.torch
+
 from .io import (
     result_dir,
     data_dir,
@@ -202,7 +206,6 @@ class TestPtychoSimulate(unittest.TestCase):
         np.testing.assert_array_equal(data.shape, self.data.shape)
         np.testing.assert_allclose(np.sqrt(data), np.sqrt(self.data), atol=1e-6)
 
-
 class TestPtychoAbsorption(SiemensStarSetup, unittest.TestCase):
     """Test various ptychography reconstruction methods for consistency."""
 
@@ -266,6 +269,109 @@ class PtychoRecon(
             )
         except ImportError:
             pass
+
+    def test_consistent_torch(self,):
+        import tike.ptycho
+
+        params = tike.ptycho.PtychoParameters(
+            psi=self.psi,
+            probe=self.probe,
+            scan=self.scan,
+            algorithm_options=tike.ptycho.AdamOptions(
+                num_batch=5,
+                num_iter=128,
+            ),
+            probe_options=ProbeOptions(),
+            object_options=ObjectOptions(),
+        )
+
+        import tike.operators.torch
+        import torch
+
+        optimizer_class = torch.optim.AdamW
+        learning_rate = 1e-1
+
+        class GaussianModelLoss(torch.nn.Module):
+
+            def forward(self, pred, target):
+                return torch.mean(torch.square(torch.sqrt(pred)-torch.sqrt(target)))
+
+        class Reconstruction(torch.nn.Module):
+
+            def __init__(self, psi, probe):
+                super().__init__()
+                self.psi = torch.nn.parameter.Parameter(psi)
+                self.probe = torch.nn.parameter.Parameter(probe)
+                self.model = tike.operators.torch.Ptycho()
+
+            def forward(self, scan):
+                """
+
+                Parameters
+                ----------
+                data : (POSI, WIDE, HIGH)
+                    Intensity measured at the detector
+
+                """
+                return self.model(self.psi, scan, self.probe)
+
+        model = Reconstruction(
+            torch.tensor(params.psi),
+            torch.tensor(params.probe),
+        )
+
+        loss_function = torch.nn.PoissonNLLLoss(
+            log_input=False,
+            eps=1e-9,
+        )
+        loss_function = GaussianModelLoss()
+
+        optimizer = optimizer_class(
+            [*model.parameters(), *loss_function.parameters()],
+            lr=learning_rate,
+        )
+
+        # scheduler = torch.optim.lr_scheduler.CyclicLR(
+        #     optimizer,
+        #     max_lr=learning_rate,
+        #     base_lr=learning_rate / 10,
+        #     mode='triangular2',
+        #     step_size_up=1 * 6,
+        #     cycle_momentum=False,
+        # )
+
+        model.to('cuda')
+        loss_function.to('cuda')
+        targ = torch.tensor(self.data).to('cuda')
+        scan = torch.tensor(params.scan).to('cuda')
+
+        training_loss = []
+        times = []
+        for epoch in range(params.algorithm_options.num_iter):
+            batch_loss = []
+            model.train(True)
+            loss_function.train(True)
+            optimizer.zero_grad()
+            pred = model(scan)
+
+            loss = loss_function(pred, targ)
+            loss.backward()
+            optimizer.step()
+            # scheduler.step()
+            batch_loss.append(loss.item())
+            training_loss.append(batch_loss)
+            times.append(epoch)
+
+        params.psi = model.psi.detach().cpu().numpy()
+        params.probe = model.probe.detach().cpu().numpy()
+        # params.scan = model.scan.detach().cpu().numpy()
+        params.algorithm_options.costs = training_loss
+        params.algorithm_options.times = times
+
+        _save_ptycho_result(
+            params,
+            f"mpi{self.mpi_size}-torch{self.post_name}",
+        )
 
     def test_consistent_adam_grad(self):
         """Check ptycho.solver.adam_grad for consistency."""
