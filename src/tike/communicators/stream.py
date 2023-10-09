@@ -10,7 +10,8 @@ def stream_and_reduce(
     args: typing.List[npt.NDArray],
     y_shapes: typing.List[typing.List[int]],
     y_dtypes: typing.List[npt.DTypeLike],
-    streams: typing.List[cp.cuda.Stream] = [cp.cuda.Stream(), cp.cuda.Stream()],
+    streams: typing.List[cp.cuda.Stream] = [cp.cuda.Stream(),
+                                            cp.cuda.Stream()],
     indices: typing.Union[None, typing.List[int]] = None,
     *,
     chunk_size: int = 64,
@@ -117,11 +118,11 @@ def stream_and_reduce(
 def stream_and_modify(
     f: typing.Callable[
         [typing.List[npt.NDArray], typing.Tuple, typing.List[int]],
-        typing.Tuple
-    ],
+        typing.Tuple],
     ind_args: typing.List[npt.NDArray],
     mod_args: typing.Tuple,
-    streams: typing.List[cp.cuda.Stream] = [cp.cuda.Stream(), cp.cuda.Stream()],
+    streams: typing.List[cp.cuda.Stream] = [cp.cuda.Stream(),
+                                            cp.cuda.Stream()],
     indices: typing.Union[None, typing.List[int]] = None,
     *,
     chunk_size: int = 64,
@@ -229,11 +230,11 @@ def stream_and_modify(
 def stream_and_modify_debug(
     f: typing.Callable[
         [typing.List[npt.NDArray], typing.Tuple, typing.List[int]],
-        typing.Tuple
-    ],
+        typing.Tuple],
     ind_args: typing.List[npt.NDArray],
     mod_args: typing.Tuple,
-    streams: typing.List[cp.cuda.Stream] = [cp.cuda.Stream(), cp.cuda.Stream()],
+    streams: typing.List[cp.cuda.Stream] = [cp.cuda.Stream(),
+                                            cp.cuda.Stream()],
     indices: typing.Union[None, typing.List[int]] = None,
     *,
     chunk_size: int = 64,
@@ -265,11 +266,7 @@ def stream_and_modify_debug(
         N = len(indices)
     chunk_size = min(chunk_size, N)
 
-    ind_args_gpu = [
-        cp.asarray(
-            x[indices],
-        ) for x in ind_args
-    ]
+    ind_args_gpu = [cp.asarray(x[indices],) for x in ind_args]
 
     for s, i in enumerate(range(0, N, chunk_size)):
         indices_chunk = indices[i:i + chunk_size]
