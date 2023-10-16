@@ -336,26 +336,42 @@ class Reconstruction():
             warnings.warn(
                 "Diffraction patterns contain invalid data. "
                 "All data should be non-negative and finite.", UserWarning)
-        odd_pool = self.comm.pool.num_workers % 2
-        (
-            self.comm.order,
+
+        # Generate a list of array of integers. i.e. an array-like object with
+        # dimensions [num_workers, num_batch * batch_size]
+        self.comm.order: typing.List[npt.NDArray[npt.Int]] = []
+        cluster_by_gpu = tike.cluster.stripes_equal_count(
             self.parameters.scan,
-            self.data,
-            self.parameters.eigen_weights,
-        ) = tike.cluster.by_scan_grid(
-            self.data,
-            self.parameters.eigen_weights,
-            scan=self.parameters.scan,
-            pool=self.comm.pool,
-            shape=(
-                self.comm.pool.num_workers
-                if odd_pool else self.comm.pool.num_workers // 2,
-                1 if odd_pool else 2,
-            ),
-            dtype=(tike.precision.floating, tike.precision.floating
-                   if self.data.itemsize > 2 else self.data.dtype,
-                   tike.precision.floating),
-            destination=('gpu', 'pinned', 'gpu'),
+            num_cluster=self.comm.pool.num_workers,
+        )
+        for cluster in cluster_by_gpu:
+            cluster_by_batch = getattr(
+                tike.cluster,
+                self.parameters.algorithm_options.batch_method,
+            )(
+                self.parameters.scan[cluster],
+                num_cluster=self.parameters.algorithm_options.num_batch,
+            )
+            self.comm.order.append(cluster[np.concatenate(cluster_by_batch)])
+
+        self.parameters.scan = self.comm.pool.map(
+            tike.cluster._split_gpu,
+            self.comm.order,
+            x=self.parameters.scan,
+            dtype=tike.precision.floating,
+        )
+        self.parameters.eigen_weights = self.comm.pool.map(
+            tike.cluster._split_gpu,
+            self.comm.order,
+            x=self.parameters.eigen_weights,
+            dtype=tike.precision.floating,
+        ) if self.parameters.eigen_weights is not None else None
+        self.data = self.comm.pool.map(
+            tike.cluster._split_pinned,
+            self.comm.order,
+            x=self.data,
+            dtype=tike.precision.floating
+            if self.data.itemsize > 2 else self.data.dtype,
         )
 
         self.parameters.psi = self.comm.pool.bcast(
@@ -387,14 +403,6 @@ class Reconstruction():
                 (self.parameters.position_options.split(x)
                  for x in self.comm.order),
             )
-
-        # Unique batch for each device
-        self.batches = self.comm.pool.map(
-            getattr(tike.cluster,
-                    self.parameters.algorithm_options.batch_method),
-            self.parameters.scan,
-            num_cluster=self.parameters.algorithm_options.num_batch,
-        )
 
         self.parameters.probe = _rescale_probe(
             self.operator,
@@ -461,7 +469,6 @@ class Reconstruction():
                 self.operator,
                 self.comm,
                 data=self.data,
-                batches=self.batches,
                 parameters=self.parameters,
             )
 
@@ -690,13 +697,13 @@ class Reconstruction():
             order,
         )
 
-        # Rebatch on each device
-        self.batches = self.comm.pool.map(
-            getattr(tike.cluster,
-                    self.parameters.algorithm_options.batch_method),
-            self.parameters.scan,
-            num_cluster=self.parameters.algorithm_options.num_batch,
-        )
+        # TODO: Rebatch on each device
+        # self.batches = self.comm.pool.map(
+        #     getattr(tike.cluster,
+        #             self.parameters.algorithm_options.batch_method),
+        #     self.parameters.scan,
+        #     num_cluster=self.parameters.algorithm_options.num_batch,
+        # )
 
         if self.parameters.eigen_weights is not None:
             self.parameters.eigen_weights = self.comm.pool.map(

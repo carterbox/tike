@@ -19,7 +19,6 @@ def dm(
     op: tike.operators.Ptycho,
     comm: tike.communicators.Comm,
     data: typing.List[npt.NDArray],
-    batches: typing.List[typing.List[npt.NDArray[cp.intc]]],
     *,
     parameters: PtychoParameters,
 ) -> PtychoParameters:
@@ -36,10 +35,6 @@ def dm(
         the intensity (square of the absolute value) of the propagated
         wavefront; i.e. what the detector records. FFT-shifted so the
         diffraction peak is at the corners.
-    batches : list(list((BATCH_SIZE, ) int, ...), ...)
-        A list of list of indices along the FRAME axis of `data` for
-        each device which define the batches of `data` to process
-        simultaneously.
     parameters : :py:class:`tike.ptycho.solvers.PtychoParameters`
         An object which contains reconstruction parameters.
 
@@ -62,7 +57,7 @@ def dm(
 
     # The objective function value for each batch
     batch_cost: typing.List[float] = []
-    for n in tike.random.randomizer_np.permutation(len(batches[0])):
+    for n in tike.random.randomizer_np.permutation(parameters.algorithm_options.num_batch):
 
         (
             cost,
@@ -77,9 +72,9 @@ def dm(
             parameters.exitwave_options.measured_pixels,
             psi_update_numerator,
             probe_update_numerator,
-            batches,
             comm.streams,
             n=n,
+            num_batch=parameters.algorithm_options.num_batch,
             op=op,
             object_options=parameters.object_options,
             probe_options=parameters.probe_options,
@@ -170,10 +165,10 @@ def _get_nearplane_gradients(
     measured_pixels: npt.NDArray,
     psi_update_numerator: typing.Union[None, npt.NDArray],
     probe_update_numerator: typing.Union[None, npt.NDArray],
-    batches: typing.List[typing.List[int]],
     streams: typing.List[cp.cuda.Stream],
     *,
     n: int,
+    num_batch: int,
     op: tike.operators.Ptycho,
     object_options: typing.Union[None, ObjectOptions] = None,
     probe_options: typing.Union[None, ProbeOptions] = None,
@@ -248,6 +243,12 @@ def _get_nearplane_gradients(
     probe_update_numerator = cp.zeros_like(
         probe,) if probe_update_numerator is None else probe_update_numerator
 
+    lo, hi = tike.cluster._batch_ends(
+        num_batch,
+        len(scan),
+        n,
+    )
+
     (
         cost,
         psi_update_numerator,
@@ -255,8 +256,8 @@ def _get_nearplane_gradients(
     ) = tike.communicators.stream.stream_and_modify(
         f=keep_some_args_constant,
         ind_args=[
-            data,
-            scan,
+            data[lo:hi],
+            scan[lo:hi],
         ],
         mod_args=[
             0.0,
@@ -264,10 +265,9 @@ def _get_nearplane_gradients(
             probe_update_numerator,
         ],
         streams=streams,
-        indices=batches[n],
     )
     return [
-        cost / len(batches[n]),
+        cost / num_batch,
         psi_update_numerator,
         probe_update_numerator,
     ]
