@@ -139,7 +139,7 @@ class ProbeOptions:
     """
 
     median_filter_abs_probe: bool = False
-    """Binary switch on whether to apply a median filter to absolute value of 
+    """Binary switch on whether to apply a median filter to absolute value of
     each shared probe mode.
     """
 
@@ -202,7 +202,7 @@ class ProbeOptions:
             probe_support=self.probe_support,
             probe_support_degree=self.probe_support_degree,
             probe_support_radius=self.probe_support_radius,
-            median_filter_abs_probe=self.median_filter_abs_probe, 
+            median_filter_abs_probe=self.median_filter_abs_probe,
             median_filter_abs_probe_px=self.median_filter_abs_probe_px,
         )
         return options
@@ -777,6 +777,10 @@ def orthogonalize_eig(
 
     References
     ----------
+    Peng Li, Tega Edo, Darren Batey, John Rodenburg, and Andrew Maiden,
+    "Breaking ambiguities in mixed state ptychography," Opt. Express 24,
+    9038-9052 (2016) https://doi.org/10.1364/OE.24.009038
+
     M. Odstrcil, P. Baksh, S. A. Boden, R. Card, J. E. Chad, J. G. Frey, W. S.
     Brocklesby, "Ptychographic coherent diffractive imaging with orthogonal
     probe relaxation." Opt. Express 24, 8360 (2016). doi: 10.1364/OE.24.008360
